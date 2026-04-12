@@ -1,0 +1,632 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>PedCardSuite — Discharge Summary</title>
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body, #root { height: 100%; }
+  body {
+    background: #0f1117;
+    -webkit-font-smoothing: antialiased;
+    -webkit-tap-highlight-color: transparent;
+  }
+  input[type=number]::-webkit-inner-spin-button,
+  input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+  input[type=number] { -moz-appearance: textfield; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+<script type="text/babel">
+const { useState, useEffect, useCallback, useMemo } = React;
+/* ═══════════════════════════════════════════════════════════════
+   PEDIATRIC CARDIOLOGY DISCHARGE SUMMARY GENERATOR v3
+   Full PedCardDose Integration • Timeline • Echo Structured
+   Smart Follow-up • Clinical Rules • 3 Pathways
+   ═══════════════════════════════════════════════════════════════ */
+
+const C = {
+  bg:"#eef1f5",card:"#fff",hd:"#0f3460",hdL:"#1a5276",hdG:"linear-gradient(135deg,#0f3460,#1a6e8e)",
+  acc:"#e63946",accSoft:"#fde8ea",grn:"#1b9e5a",grnBg:"#e8f8ef",blu:"#2563eb",bluBg:"#eff6ff",
+  txt:"#1e293b",mut:"#64748b",bdr:"#d1d9e6",inp:"#f4f6f9",
+  tag:"#e0e7ee",tagAct:"#0f3460",tagActTx:"#fff",warn:"#f59e0b",warnBg:"#fffbeb",
+  opBdr:"#f59e0b",opBg:"#fff7ed",cathBdr:"#3b82f6",cathBg:"#eff6ff",medBdr:"#22c55e",medBg:"#f0fdf4",
+};
+const F="'DM Sans',sans-serif", FM="'JetBrains Mono',monospace";
+
+// ═══════ HELPERS ═══════
+const today=()=>new Date().toISOString().split("T")[0];
+const uid=()=>Math.random().toString(36).slice(2,8);
+const tog=(a,s,v)=>s(p=>p.includes(v)?p.filter(x=>x!==v):[...p,v]);
+
+// ═══════ FULL DRUG DATABASE (from PedCardDose) ═══════
+// Each drug: n=name, b=brand, u=unit, dpk=dose/kg (per DOSE unless pd=true→per day), f=freq, r=route, mx=max single dose, pd=perDay, cat=category, nt=note, dil=dilution, tabs=tab strengths, sypConc=syrup concentration, sypBrand=syrup brand name, combo=combo brands
+const DRUGS = [
+  // ── Diuretics ──
+  {n:"Furosemide",b:"Furoped drops/Lasix",u:"mg",dpk:1,f:"BD",r:"PO",mx:40,pd:false,cat:"Diuretic",dil:"Furoped drops 10mg/mL",sypConc:10,sypBrand:"Furoped",tabs:[20,40],nt:"K+,Ca2+ monitor. If >40mg/dose→switch to Dytor",combo:"Lasilactone (Furo20+Spiro50)"},
+  {n:"Torsemide",b:"Dytor",u:"mg",dpk:0.2,f:"OD-BD",r:"PO",mx:20,pd:false,cat:"Diuretic",tabs:[5,10,20],combo:"Dytor Plus 10/50 (Torsi+Spiro)"},
+  {n:"Spironolactone",b:"Aldactone",u:"mg",dpk:1,f:"BD",r:"PO",mx:50,pd:false,cat:"Diuretic",dil:"Crush Aldactone 25mg in 5mL→5mg/mL",tabs:[25,50],combo:"Lasilactone"},
+  {n:"Hydrochlorothiazide",b:"Aquazide",u:"mg",dpk:1,f:"BD",r:"PO",mx:25,pd:true,cat:"Diuretic",tabs:[12.5,25]},
+  {n:"Metolazone",b:"Zytanix",u:"mg",dpk:0.2,f:"OD",r:"PO",mx:5,pd:true,cat:"Diuretic",dil:"Crush Zytanix 2.5mg in 5mL→0.5mg/mL",tabs:[2.5,5],nt:"30min before furosemide"},
+  // ── ACEi / ARB / ARNI ──
+  {n:"Enalapril",b:"Envas",u:"mg",dpk:0.05,f:"BD",r:"PO",mx:20,pd:false,cat:"ACEi/ARB",dil:"Crush Envas 2.5mg in 5mL→0.5mg/mL",tabs:[2.5,5,10],nt:"Start dose; target 0.1-0.5mg/kg/dose BD"},
+  {n:"Captopril",b:"Captoril",u:"mg",dpk:0.1,f:"TDS",r:"PO",mx:12.5,pd:false,cat:"ACEi/ARB"},
+  {n:"Ramipril",b:"Cardace",u:"mg",dpk:0.05,f:"OD-BD",r:"PO",mx:5,pd:false,cat:"ACEi/ARB",tabs:[1.25,2.5,5]},
+  {n:"Losartan",b:"Losar",u:"mg",dpk:0.5,f:"OD-BD",r:"PO",mx:50,pd:false,cat:"ACEi/ARB",dil:"Crush Losar 25mg in 5mL→5mg/mL",tabs:[25,50]},
+  {n:"Sacubitril/Valsartan",b:"VYMADA",u:"mg",dpk:1.6,f:"BD",r:"PO",mx:49,pd:false,cat:"ARNI",tabs:["24/26","49/51","97/103"],nt:"ARNI. 36hr washout from ACEi. Band dosing: <20kg ½tab 24/26 BD; 20-40kg 1tab 24/26 BD; >40kg 1tab 49/51 BD"},
+  // ── Beta-blockers ──
+  {n:"Carvedilol",b:"Cardivas",u:"mg",dpk:0.05,f:"BD",r:"PO",mx:25,pd:false,cat:"Beta-blocker",dil:"Crush Cardivas 3.125mg in 3mL≈1mg/mL",tabs:[3.125,6.25,12.5,25],nt:"Start 0.05mg/kg/dose; target 0.2-0.4mg/kg/dose. NOT acute decompensation"},
+  {n:"Propranolol",b:"Inderal",u:"mg",dpk:1,f:"TDS",r:"PO",mx:40,pd:false,cat:"Beta-blocker",dil:"Crush Inderal 10mg in 10mL→1mg/mL",tabs:[10,20,40],nt:"<1yr SVT first-line. Tet spell ppx 1-4mg/kg/day. HR<80→hold"},
+  {n:"Atenolol",b:"Aten",u:"mg",dpk:0.5,f:"OD-BD",r:"PO",mx:100,pd:false,cat:"Beta-blocker",dil:"Crush Aten 25mg in 5mL→5mg/mL",tabs:[25,50],nt:">1yr SVT. Avoid in asthma"},
+  {n:"Metoprolol",b:"Metolar XR",u:"mg",dpk:1,f:"BD",r:"PO",mx:100,pd:false,cat:"Beta-blocker",dil:"Crush Metolar 25mg in 5mL→5mg/mL",tabs:[25,50]},
+  {n:"Ivabradine",b:"Ivabrad",u:"mg",dpk:0.05,f:"BD",r:"PO",mx:7.5,pd:false,cat:"Rate control",dil:"Crush Ivabrad 5mg in 5mL→1mg/mL",tabs:[5,7.5],nt:"DCM with sinus rhythm. >6mo"},
+  // ── Inotrope/Other ──
+  {n:"Digoxin",b:"Digoxin Elixir/Digon",u:"mcg",dpk:5,f:"OD (Mon-Fri)",r:"PO",mx:250,pd:true,cat:"Inotrope",sypConc:50,sypBrand:"Digoxin Elixir 50mcg/mL",tabs:[0.25],nt:"5mcg/kg/dose OD Mon-Fri (weekends off). Target level 0.5-0.9. NOT WPW"},
+  // ── Pulmonary vasodilators ──
+  {n:"Sildenafil",b:"Pulmosil/Suhagra",u:"mg",dpk:1,f:"TDS",r:"PO",mx:20,pd:false,cat:"Pulm vasodilator",sypConc:10,sypBrand:"Pulmosil susp 10mg/mL",tabs:[25,50],nt:"Pulmosil syrup <10kg. CI: riociguat",combo:"Endobloc-T; Pulmonext"},
+  {n:"Tadalafil",b:"Tazzle",u:"mg",dpk:0.5,f:"OD",r:"PO",mx:20,pd:true,cat:"Pulm vasodilator",dil:"Crush Tazzle 5mg in 5mL→1mg/mL",tabs:[2.5,5,10,20]},
+  {n:"Bosentan",b:"Bosentas",u:"mg",dpk:1,f:"BD",r:"PO",mx:125,pd:false,cat:"Pulm vasodilator",dil:"Dissolve Bosentas 62.5mg in 5mL water→12.5mg/mL",tabs:[62.5,125],nt:"LFT monthly. Band dose: <10kg use dilution; 10-20kg ½tab 62.5 BD; 20-40kg 1tab 62.5 BD; >40kg 1tab 125 BD",combo:"Endobloc-T; Pulmonext"},
+  {n:"Ambrisentan",b:"Endobloc",u:"mg",dpk:0,f:"OD",r:"PO",mx:10,pd:true,cat:"Pulm vasodilator",tabs:[5,10],nt:"Fixed: 5mg OD (>12yr)"},
+  {n:"Macitentan",b:"Opsumit",u:"mg",dpk:0,f:"OD",r:"PO",mx:10,pd:true,cat:"Pulm vasodilator",tabs:[10],nt:"Fixed: 10mg OD. Limited pediatric data"},
+  {n:"Riociguat",b:"Adempas",u:"mg",dpk:0.05,f:"TDS",r:"PO",mx:2.5,pd:false,cat:"Pulm vasodilator",tabs:[0.5,1,1.5,2,2.5],nt:"NEVER with PDE5i"},
+  // ── Antiarrhythmics ──
+  {n:"Amiodarone PO",b:"Cordarone",u:"mg",dpk:5,f:"OD",r:"PO",mx:200,pd:true,cat:"Antiarrhythmic",dil:"Crush Cordarone 100mg in 10mL→10mg/mL",tabs:[100,200],nt:"Loading 10-20mg/kg/day ×7-10d; Maint 5-10mg/kg/day. Monitor TFT, LFT, CXR"},
+  {n:"Flecainide",b:"Flecainide",u:"mg",dpk:2,f:"BD-TDS",r:"PO",mx:100,pd:true,cat:"Antiarrhythmic",dil:"Crush 50mg in 10mL→5mg/mL",tabs:[50,100],nt:"CI: structural heart disease"},
+  {n:"Sotalol",b:"Sotagard",u:"mg",dpk:1,f:"BD",r:"PO",mx:160,pd:false,cat:"Antiarrhythmic",dil:"Crush Sotagard 40mg in 8mL→5mg/mL",tabs:[40,80],nt:"ADMIT for QTc monitoring"},
+  // ── Antithrombotic ──
+  {n:"Aspirin (antiplatelet)",b:"Ecosprin",u:"mg",dpk:5,f:"OD",r:"PO",mx:75,pd:true,cat:"Antithrombotic",tabs:[75,150],nt:"3-5mg/kg/day antiplatelet. Post-device/post-stent"},
+  {n:"Aspirin (anti-inflam)",b:"Ecosprin",u:"mg",dpk:12.5,f:"QDS",r:"PO",mx:1000,pd:false,cat:"Antithrombotic",tabs:[75,150,325],nt:"50-100mg/kg/day for ARF. PPI cover. Taper after 2-6wk"},
+  {n:"Clopidogrel",b:"Clopilet",u:"mg",dpk:1,f:"OD",r:"PO",mx:75,pd:true,cat:"Antithrombotic",dil:"Crush Clopilet 75mg in 7.5mL→10mg/mL",tabs:[75],nt:"Post-stent dual antiplatelet"},
+  {n:"Warfarin",b:"Warf",u:"mg",dpk:0.1,f:"OD",r:"PO",mx:5,pd:true,cat:"Antithrombotic",dil:"Crush Warf 1mg in 5mL→0.2mg/mL",tabs:[1,2,5],nt:"Titrate to INR 2-3. Mech valve INR 2.5-3.5"},
+  {n:"Enoxaparin",b:"Clexane",u:"mg",dpk:1,f:"BD SC",r:"SC",mx:40,pd:false,cat:"Antithrombotic",nt:"<2mo: 1.5mg/kg/dose. Anti-Xa monitoring 4-6h post"},
+  // ── Supplements ──
+  {n:"Iron (elemental)",b:"Tonoferon drops/Ferium XT",u:"mg",dpk:3,f:"OD-BD",r:"PO",mx:60,pd:true,cat:"Supplement",sypConc:25,sypBrand:"Tonoferon drops 25mg/mL",nt:"Tonoferon drops 25mg/mL Fe, Ferium XT syrup 30mg/5mL. Cyanotic CHD: 3-6mg/kg/day"},
+  {n:"Calcium",b:"Shelcal",u:"mg",dpk:12.5,f:"BD",r:"PO",mx:500,pd:false,cat:"Supplement",sypConc:50,sypBrand:"Shelcal susp 50mg/mL",nt:"Elemental Ca. With furosemide. Separate from iron. >20kg: Tab Shelcal 500 ½ tab BD"},
+  {n:"Vitamin D",b:"D3 Must/Arachitol",u:"IU",dpk:0,f:"OD",r:"PO",mx:1000,pd:true,cat:"Supplement",nt:"400-1000 IU/day"},
+  {n:"Potassium Chloride",b:"Potklor",u:"mEq",dpk:1,f:"BD-TDS",r:"PO",mx:20,pd:true,cat:"Supplement",nt:"With loop diuretics. Potklor liquid 1.5mEq/mL"},
+  // ── ARF ──
+  {n:"Prednisolone",b:"Omnacortil",u:"mg",dpk:1,f:"OD-BD",r:"PO",mx:60,pd:true,cat:"ARF/Steroid",sypConc:3,sypBrand:"Omnacortil syrup 15mg/5mL",tabs:[5,10,20],nt:"Carditis: 1-2mg/kg/day ×2-3wk then taper. Overlap aspirin"},
+  {n:"Naproxen",b:"Naprosyn",u:"mg",dpk:5,f:"BD",r:"PO",mx:500,pd:false,cat:"ARF/Steroid",sypConc:25,sypBrand:"Naprosyn susp 125mg/5mL",tabs:[250,500],nt:"First-line for joint/mild carditis"},
+  {n:"Benzathine Pen G",b:"Penidure LA",u:"IU",dpk:0,f:"q3wk IM",r:"IM",mx:1200000,pd:true,cat:"ARF/Steroid",nt:"<27kg: 6L IU; ≥27kg: 12L IU q3-4wk. ANAPHYLAXIS KIT ready"},
+  {n:"Carbamazepine",b:"Tegrital",u:"mg",dpk:2.5,f:"BD",r:"PO",mx:200,pd:false,cat:"ARF/Steroid",sypConc:20,sypBrand:"Tegrital susp 100mg/5mL",tabs:[100,200],nt:"For Sydenham chorea. CBC, LFT monitor"},
+  // ── Hypertension ──
+  {n:"Amlodipine",b:"Amcard",u:"mg",dpk:0.05,f:"OD",r:"PO",mx:10,pd:true,cat:"Antihypertensive",dil:"Crush Amcard 2.5mg in 5mL→0.5mg/mL",tabs:[2.5,5,10]},
+  {n:"Clonidine",b:"Arkamin",u:"mcg",dpk:5,f:"BD-TDS",r:"PO",mx:300,pd:false,cat:"Antihypertensive",dil:"Crush Arkamin 100mcg in 5mL→20mcg/mL",tabs:[100,150],nt:"Rebound HTN if stopped abruptly"},
+  {n:"Labetalol",b:"Lobet",u:"mg",dpk:1,f:"BD",r:"PO",mx:100,pd:false,cat:"Antihypertensive",dil:"Crush Lobet 100mg in 10mL→10mg/mL",tabs:[100],nt:"α+β blocker"},
+  {n:"Prazosin",b:"Minipress",u:"mg",dpk:0.05,f:"BD",r:"PO",mx:5,pd:false,cat:"Antihypertensive",dil:"Crush Minipress 2.5mg in 5mL→0.5mg/mL",tabs:[2.5,5],nt:"First dose at bedtime"},
+  // ── Cholesterol ──
+  {n:"Atorvastatin",b:"Atorva",u:"mg",dpk:0,f:"OD evening",r:"PO",mx:20,pd:true,cat:"Statin",tabs:[10,20],nt:"Fixed: 10mg OD. Monitor LFT, CK. ≥10yr"},
+  {n:"Rosuvastatin",b:"Rozavel",u:"mg",dpk:0,f:"OD",r:"PO",mx:20,pd:true,cat:"Statin",tabs:[5,10,20],nt:"Fixed: 5mg OD. ≥10yr"},
+  {n:"Ezetimibe",b:"Ezedoc",u:"mg",dpk:0,f:"OD",r:"PO",mx:10,pd:true,cat:"Statin",tabs:[10],nt:"Add to statin"},
+  // ── IE Prophylaxis ──
+  {n:"Amoxicillin (IE ppx)",b:"Mox",u:"mg",dpk:50,f:"SINGLE pre-procedure",r:"PO",mx:2000,pd:true,cat:"IE Prophylaxis",sypConc:50,sypBrand:"Mox syrup 250mg/5mL",tabs:[250,500]},
+  {n:"Clindamycin (IE ppx)",b:"Dalacin C",u:"mg",dpk:20,f:"SINGLE pre-procedure",r:"PO",mx:600,pd:true,cat:"IE Prophylaxis",sypConc:15,sypBrand:"Dalacin C susp 75mg/5mL",tabs:[150,300],nt:"If penicillin allergic"},
+  // ── Bronchodilators ──
+  {n:"Levosalbutamol neb",b:"Levolin",u:"mg",dpk:0.075,f:"Q4-6h neb",r:"NEB",mx:1.25,pd:false,cat:"Respiratory",nt:"Levolin resp 0.63/1.25mg. Or Duolin-LS combo"},
+  {n:"Budesonide neb",b:"Budecort",u:"mg",dpk:0,f:"BD neb",r:"NEB",mx:1,pd:false,cat:"Respiratory",nt:"Fixed: 0.5-1mg/neb BD"},
+  {n:"Ipratropium neb",b:"Ipravent/Duolin-LS",u:"mcg",dpk:0,f:"Q6-8h neb",r:"NEB",mx:500,pd:false,cat:"Respiratory",nt:"<20kg: 250mcg; >20kg: 500mcg per neb"},
+  // ── CNS ──
+  {n:"Phenobarbitone",b:"Gardenal",u:"mg",dpk:3,f:"BD",r:"PO",mx:60,pd:true,cat:"CNS",tabs:[15,30,60]},
+  {n:"Levetiracetam",b:"Levera",u:"mg",dpk:10,f:"BD",r:"PO",mx:500,pd:false,cat:"CNS",sypConc:100,sypBrand:"Levera syrup 100mg/mL",tabs:[250,500]},
+  // ── GI ──
+  {n:"Domperidone",b:"Domstal",u:"mg",dpk:0.25,f:"TDS",r:"PO",mx:10,pd:false,cat:"GI"},
+  {n:"Omeprazole",b:"Omez",u:"mg",dpk:1,f:"OD",r:"PO",mx:20,pd:true,cat:"GI",tabs:[10,20]},
+  {n:"Sucralfate",b:"Sucrafil",u:"mL",dpk:0,f:"QDS",r:"PO",mx:10,pd:false,cat:"GI",nt:"5-10mL QDS AC. Stress ulcer ppx"},
+  // ── Analgesic ──
+  {n:"Paracetamol",b:"Calpol/Dolo",u:"mg",dpk:15,f:"Q4-6h PRN",r:"PO",mx:500,pd:false,cat:"Analgesic"},
+  {n:"Ibuprofen",b:"Brufen",u:"mg",dpk:5,f:"TDS PRN",r:"PO",mx:200,pd:false,cat:"Analgesic"},
+  // ── Kawasaki ──
+  {n:"IVIG",b:"Various",u:"g",dpk:2,f:"SINGLE over 10-12h",r:"IV",mx:80,pd:true,cat:"Kawasaki",nt:"2g/kg single dose. Delay live vaccines 11mo"},
+  // ── Combo Tabs ──
+  {n:"Lasilactone",b:"Lasilactone",u:"tab",dpk:0,f:"OD-BD",r:"PO",mx:1,pd:false,cat:"Combo",nt:"Furo 20mg + Spiro 50mg. 1 tab OD-BD for >20kg"},
+  {n:"Dytor Plus",b:"Dytor Plus 10/50",u:"tab",dpk:0,f:"OD-BD",r:"PO",mx:1,pd:false,cat:"Combo",nt:"Torsemide 10mg + Spiro 50mg. For >20kg"},
+  {n:"Envas-H",b:"Envas-H",u:"tab",dpk:0,f:"OD",r:"PO",mx:1,pd:false,cat:"Combo",nt:"Enalapril 5mg + HCTZ 12.5mg. Adolescents"},
+  {n:"Losar-H",b:"Losar-H",u:"tab",dpk:0,f:"OD",r:"PO",mx:1,pd:false,cat:"Combo",nt:"Losartan 50mg + HCTZ 12.5mg. Adolescents"},
+  {n:"Amlopres-AT",b:"Amlopres-AT 2.5/25",u:"tab",dpk:0,f:"OD",r:"PO",mx:1,pd:false,cat:"Combo",nt:"Amlodipine 2.5mg + Atenolol 25mg"},
+  {n:"Dapagliflozin",b:"Forxiga",u:"mg",dpk:0,f:"OD",r:"PO",mx:10,pd:true,cat:"SGLT2i",tabs:[5,10],nt:"SGLT2i off-label. Adolescents. 10mg OD"},
+];
+
+const calcDose=(d,w)=>{
+  if(!w||w<=0)return"—";
+  const wt=Math.min(w,40);
+  if(d.dpk===0)return d.nt?.split(".")[0]||"Fixed dose";
+  const fN=d.f.includes("TDS")?3:d.f.includes("QDS")?4:d.f.includes("BD")?2:1;
+  let raw=d.pd?(d.dpk*wt)/fN:d.dpk*wt;
+  const cap=Math.min(raw,d.mx);
+  const r=d.u==="mcg"?Math.round(cap):Math.round(cap*10)/10;
+  return`${r} ${d.u}/${d.pd?"day":"dose"} ${d.f}`;
+};
+
+// ═══════ DIAGNOSIS DATA ═══════
+const DIAGNOSES={
+  "Acyanotic — L→R shunt":["VSD (Perimembranous)","VSD (Muscular)","VSD (Outlet/Subpulmonary)","VSD (Inlet)","Secundum ASD","Sinus venosus ASD","Primum ASD","Complete AVSD","Partial AVSD","PDA","AP Window","Ruptured sinus of Valsalva"],
+  "Acyanotic — Obstructive":["Valvar AS","Subvalvar AS (membrane)","Subvalvar AS (tunnel)","Supravalvar AS","Coarctation of Aorta","Interrupted Aortic Arch","Valvar PS","Branch PA Stenosis","Cor Triatriatum"],
+  "Acyanotic — Regurgitant":["Mitral Regurgitation","Aortic Regurgitation","Tricuspid Regurgitation","RHD — MR","RHD — MS","RHD — Mixed mitral","RHD — Multivalvular"],
+  "Cyanotic — ↓PBF":["TOF","TOF + absent PV","TOF + MAPCA","PA-IVS","PA-VSD","Tricuspid Atresia","Ebstein Anomaly","DORV — Fallot type"],
+  "Cyanotic — ↑PBF/Mixing":["d-TGA","d-TGA + VSD","TAPVC (Supra/Infra/Cardiac/Mixed)","Truncus Arteriosus","Single Ventricle — DILV","Single Ventricle — Unbalanced AVSD","Single Ventricle — MA/TA","DORV — TGA type","HLHS"],
+  "Cardiomyopathy":["Dilated CMP","Hypertrophic CMP","Restrictive CMP","LV Non-compaction","Myocarditis (acute)"],
+  "PAH / Vascular":["Idiopathic PAH","Eisenmenger Syndrome","PAH — CHD associated","PPHN","Takayasu Arteritis"],
+  "Arrhythmia":["SVT (AVRT)","SVT (AVNRT)","Atrial Flutter","VT","Complete Heart Block","Sinus Node Dysfunction","WPW Syndrome","Long QT Syndrome","JET (post-op)"],
+  "Infectious / Inflammatory":["Infective Endocarditis","Kawasaki Disease","Acute Rheumatic Fever","Pericardial Effusion","Myocarditis","MIS-C cardiac"],
+  "Post-Fontan/Glenn":["Post BDG (Glenn)","Post Fontan (LT/EC)","Fontan failure","Plastic bronchitis","Protein-losing enteropathy"],
+  "Acquired — Valve":["Rheumatic mitral stenosis","Rheumatic mitral regurg","Post-valve surgery","Prosthetic valve dysfunction"],
+};
+
+const ASSOC_ANOM=["Secundum ASD","PFO","PDA","LSVC to CS","Right aortic arch","Aberrant subclavian","Bilateral SVC","Vascular ring","Coronary anomaly","MPA hypoplasia","LPA stenosis","RPA stenosis","PAPVC","Dextrocardia","Situs inversus","Heterotaxy","Juxtaposed atrial appendages"];
+const SYNDROMES=["Down Syndrome (T21)","DiGeorge/22q11.2 del","Turner Syndrome","Noonan Syndrome","Williams Syndrome","Marfan Syndrome","Alagille Syndrome","Holt-Oram Syndrome","CHARGE Syndrome","VACTERL","Trisomy 13","Trisomy 18","None"];
+const NON_CARDIAC=["Failure to thrive","Recurrent LRTI","Developmental delay","Hypothyroidism","Seizure disorder","CKD","Feeding difficulties","GERD","Hearing impairment","Laryngomalacia","Subglottic stenosis","Anemia of chronic disease","PEM Grade I-IV","Cleft palate","Duodenal atresia","Hirschsprung","None"];
+
+// ═══════ STRUCTURED ECHO ═══════
+const ECHO={
+  situs:["Situs solitus","Situs inversus","Situs ambiguus — Right isomerism","Situs ambiguus — Left isomerism"],
+  avConn:["AV concordance","AV discordance","Double inlet LV","Double inlet RV","Absent right AV connection (TA)","Absent left AV connection (MA)","Common AV valve","Straddling TV","Straddling MV"],
+  vaConn:["VA concordance","VA discordance (TGA)","DORV","DOLV","Common arterial trunk","Absent one great artery — Pulmonary atresia","Absent one great artery — Aortic atresia"],
+  lvFunc:["Normal LV systolic function","LV dysfunction — mild (EF 45-54%)","LV dysfunction — moderate (EF 30-44%)","LV dysfunction — severe (EF <30%)","Hyperdynamic LV"],
+  rvFunc:["Normal RV function","RV dysfunction — mild","RV dysfunction — moderate","RV dysfunction — severe","RV volume overload","RV pressure overload"],
+  shunt:["No shunt","L→R shunt (unrestricted)","L→R shunt (restrictive)","R→L shunt","Bidirectional shunt","Predominantly L→R","Predominantly R→L"],
+  pah:["No PAH","Mild PAH (RVSP 35-45mmHg)","Moderate PAH (RVSP 45-60mmHg)","Severe PAH (RVSP >60mmHg)","Suprasystemic PAH","PA systolic <½ systemic"],
+  valves:["No significant valve disease","Mild TR","Moderate TR","Severe TR","Mild MR","Moderate MR","Severe MR","Mild AR","Moderate AR","Severe AR","Mild PR","Moderate PR","Severe PR","Mild MS","Moderate MS","Severe MS","Mild PS","Moderate PS","Severe PS"],
+  other:["No pericardial effusion","Mild pericardial effusion","Moderate pericardial effusion","Large pericardial effusion","Vegetation(s) noted","Device in situ — good position","Stent in situ — good position","No thrombus","Patent BT shunt","PA band — adequate gradient","Good Glenn flow","Good Fontan flow","Restrictive ASD","Good surgical repair — no residual","Residual VSD (small)","Residual VSD (significant)","Residual gradient across RVOT","Residual gradient across CoA","Patent foramen ovale — small"],
+};
+
+// ═══════ PRESENTING COMPLAINTS ═══════
+const COMPLAINTS={
+  acute:["Fast breathing","Difficulty breathing","Bluish discoloration","Poor feeding","Sweating during feeds","Poor weight gain","Recurrent LRTI","Fever","Chest pain","Palpitations","Syncope","Swelling (face/feet)","Decreased urine","Cyanotic spell","Exercise intolerance","Failure to thrive","Lethargy","Irritability","Diaphoresis"],
+  planned:["Planned surgical repair","Planned cath intervention","Elective evaluation/workup","Pre-operative assessment","Planned device implant","Drug optimization","IE treatment completion","Kawasaki treatment","Post-op complication"],
+};
+
+// ═══════ ECG / CXR / LABS ═══════
+const ECG=["NSR","Sinus tachycardia","Sinus bradycardia","LAE","RAE","Biatrial enlargement","LVH","RVH","BVH","RAD","LAD","Superior axis","Northwest axis","1st degree AVB","2nd degree AVB — Mobitz I","2nd degree AVB — Mobitz II","Complete heart block","RBBB","Incomplete RBBB","LBBB","Bifascicular block","ST elevation","ST depression","T-wave inversion","Prolonged QTc","Short QTc","Delta wave (WPW)","Junctional rhythm","Atrial flutter","SVT","Low voltage","Paced rhythm — VVI","Paced rhythm — DDD","Ventricular ectopics","Normal for age"];
+const CXR=["Normal heart size","Mild cardiomegaly","Moderate cardiomegaly","Severe cardiomegaly","↑ Pulmonary vascularity","↓ Pulmonary vascularity","Pulmonary plethora","Pulmonary edema","Pleural effusion (R)","Pleural effusion (L)","Bilateral pleural effusion","Consolidation","Atelectasis","Clear lung fields","Sternotomy wires","Post-op changes","PA band shadow","Pacemaker/ICD in situ","Right aortic arch","Boot-shaped heart (TOF)","Egg-on-string (TGA)","Snowman sign (TAPVC)","Normal CT ratio"];
+const LABS={
+  "CBC":["Hb normal","Hb low (anemia)","Polycythemia (Hb >18)","Thrombocytopenia","Leukocytosis","Leukopenia","Normal CBC"],
+  "Inflammatory":["CRP elevated","CRP normal","ESR elevated","Procalcitonin ↑","Procalcitonin normal"],
+  "Cardiac":["NT-proBNP elevated","NT-proBNP normal","Troponin ↑","Troponin normal","Digoxin level therapeutic","Digoxin level toxic"],
+  "Culture":["Blood culture — No growth","BC — Positive (specify organism)","BC — Pending","Urine culture — No growth"],
+  "Renal/Hepatic":["Normal RFT","↑ Creatinine","Normal LFT","↑ Transaminases","Low albumin","Normal electrolytes","Hyponatremia","Hypokalemia","Hyperkalemia","Hypocalcemia"],
+  "Coag":["INR in range","INR sub-therapeutic","INR supra-therapeutic","Normal PT/aPTT","Anti-Xa in range"],
+  "Other":["TFT normal","TFT abnormal","ABG — Met acidosis","ABG — Resp alkalosis","ABG — Normal","Lactate ↑","Lactate normal","Iron studies — deficient","Ferritin low"],
+};
+
+// ═══════ PROCEDURES ═══════
+const SURGERIES={
+  "Closed Heart":["PDA ligation","PA banding","BT shunt (modified)","CoA repair (end-to-end)","CoA repair (patch)","CoA repair (subclavian flap)","Vascular ring repair","BDG / Glenn shunt","Thoracotomy — other"],
+  "Open Heart — Simple":["VSD closure (patch)","VSD closure (direct)","ASD closure (patch/direct)","PDA device closure (surgical)","Complete AVSD repair","Partial AVSD repair","TAPVC repair"],
+  "Open Heart — Complex":["TOF ICR","Arterial switch operation (ASO)","Rastelli operation","Senning/Mustard","Fontan (LT/EC)","Fontan revision","Ross procedure","Konno procedure","DKS + Glenn","Norwood Stage 1","Truncus repair","MV repair","MV replacement (mechanical)","MV replacement (bio)","AV repair","AV replacement (mechanical)","AV replacement (bio)","TV repair/replacement","DVR"],
+  "Other":["Pericardial drainage","Mediastinal re-exploration","Diaphragm plication","PPM implant","ICD implant","CRT implant","ECMO cannulation/decannulation","Delayed sternal closure"],
+};
+const CATH_PROCS={
+  "Balloon":["BAS (Rashkind)","Balloon PV","Balloon AV","Balloon MV","Balloon CoA dilation","Balloon PA dilation"],
+  "Device/Coil":["ASD device closure","PDA device closure","PDA coil closure","VSD device closure","Muscular VSD device","PFO device","Ruptured sinus closure","MAPCA coil","Venovenous collateral coil","AP collateral coil"],
+  "Stent":["CoA stent","RPA stent","LPA stent","Duct stent","Fontan conduit stent","PV stent","RVOT stent"],
+  "Diagnostic/EP":["Diagnostic cath — hemodynamics","PVR study (iNO/O₂)","Coronary angio","EP study","EP study + ablation","Endomyocardial biopsy"],
+  "Other":["Pericardiocentesis","TPVR","Foreign body retrieval","Septal puncture"],
+};
+
+// ═══════ COURSE TOGGLES (per pathway) ═══════
+const POSTOP_COURSE={
+  "Ventilation":["Extubated on table","Extubated POD 1","Extubated POD 2","Extubated POD 3","Prolonged ventilation (>5d)","Reintubation required","NIV/CPAP post-extubation","Tracheostomy done"],
+  "Hemodynamics":["Hemodynamically stable post-op","Inotropes used — weaned by POD 2","Inotropes used — weaned by POD 3","Inotropes used — weaned by POD 5","Milrinone infusion","Vasopressin used","Noradrenaline used","Levosimendan given","Temporary pacing used — weaned","Temporary pacing — permanent PPM placed"],
+  "Chest/Drains":["Delayed sternal closure → closed POD 1-2","Chest drain — minimal output → removed","Chest drain removed POD 2","Chest drain removed POD 3","Chylous drain output","High output → explored","Peritoneal drain placed → removed"],
+  "Feeding/Recovery":["Feeds started POD 1","Feeds started POD 2","Full feeds achieved","Breastfeeding established","NG feeds required","Oral meds tolerated","Weight gain noted","Mobilized — physio started"],
+  "Lines":["Arterial line removed","CVP removed","Femoral line removed","UC removed","All lines out — peripheral IV only"],
+  "Complications ⚠":["Uneventful post-op course","Bleeding — re-exploration","JET — cooling + Amiodarone","JET — resolved with cooling","SVT post-op","CHB transient — resolved","CHB permanent — PPM placed","Wound infection — Abx treated","Sternal dehiscence","Chylothorax — MCT diet","Chylothorax — Octreotide","Chylothorax — TD ligation","Pleural effusion — tapped","Pericardial effusion — drained","Diaphragm palsy — plication","Phrenic nerve palsy — conservative","Seizure — treated","Stroke / neuro event","Renal dysfunction — resolved","Renal dysfunction — dialysis","Sepsis — treated","Vocal cord palsy","LCOS — managed","ECMO support required","Residual lesion on post-op echo"],
+};
+const POSTCATH_COURSE={
+  "Immediate":["Hemostasis — manual compression","Hemostasis — closure device","Sheaths removed in cath lab","Bed rest 4-6h maintained","Limb pulses checked — normal","Good distal perfusion"],
+  "Access site":["No hematoma","Small hematoma — conservative","Large hematoma","Pseudoaneurysm","Limb pulse normal","Limb pulse diminished — heparin started","Limb pulse diminished — resolved","Limb pulse absent — vascular surgery"],
+  "Outcome":["Successful — good result","Gradient abolished/significantly reduced","Device well-positioned on TTE","No residual shunt","Small residual shunt (expected to close)","Significant residual — re-intervention planned","Partial success — staged approach","Procedure abandoned — anatomy","Hemodynamic assessment complete"],
+  "Monitoring":["Overnight ICU","24h telemetry","Hemodynamically stable","Aspirin started post-device","Dual antiplatelet started","Heparin infusion given","No arrhythmia","Transient arrhythmia — resolved","Feeds tolerated","Mobilized next AM","Ready for discharge"],
+  "Complications ⚠":["Uneventful post-cath","Vasospasm — resolved","Arrhythmia during procedure — resolved","Device embolization — retrieved","Vessel perforation — managed","Contrast reaction — managed","Significant bleeding — transfused","Tamponade — managed","Air embolism — resolved","Transient heart block — resolved","Complete heart block — PPM"],
+};
+const MEDICAL_COURSE={
+  "HF management":["Admitted in decompensated CCF","IV Furosemide — good diuresis","Shifted to oral diuretics","Oral Furosemide optimized","Spironolactone added","ACEi started","ACEi uptitrated","Carvedilol started","Carvedilol uptitrated","ARNI initiated","Digoxin added","Fluid restriction maintained","Daily weight monitoring","Negative balance achieved","BNP improving","Compensated at discharge"],
+  "PAH management":["Sildenafil started","Sildenafil uptitrated","Bosentan started","Bosentan uptitrated","Combination PAH therapy","AVT — reactive","AVT — non-reactive","iNO given","6MWT performed","PAH — improved","PAH — stable","PAH — worsening"],
+  "Arrhythmia":["Adenosine — SVT terminated","Amiodarone loading","Oral Amiodarone started","Flecainide started","Propranolol started","Cardioversion — successful","Rate control achieved","EP study — focus identified","Ablation successful","PPM implanted","Holter done","Normal rhythm at discharge"],
+  "IE/Infection":["3 sets BC sent","BC positive — organism ID'd","IV Abx per sensitivity","Empiric IV Abx started","Completed 2wk IV Abx","Completed 4wk IV Abx","Completed 6wk IV Abx","Repeat BC — sterile","Vegetation reducing","Dental eval done","IE prophylaxis counseled"],
+  "Kawasaki":["IVIG 2g/kg given","IVIG — defervescence within 36h","IVIG — persistent fever → 2nd dose IVIG","High-dose Aspirin started → taper to low-dose","Coronary arteries normal on echo","Coronary dilation noted","Coronary aneurysm noted","Echo follow-up planned"],
+  "Evaluation":["Echo done","Cath done","CT angio done","Cardiac MRI done","Genetic testing sent","Metabolic screen sent","Holter done","EST done","MDT review done","Declared operable","Declared inoperable","Staged palliation planned"],
+  "General":["Uneventful stay","Stable throughout","Clinically improved","Hemodynamically stable","Feeds tolerated","Weight gain noted","Transfusion given","Albumin infusion","Physio initiated","Developmental assessment","Nutritional rehab","Social work/counseling done"],
+};
+
+// ═══════ TIMELINE SMART PHRASES ═══════
+const TIMELINE_EVENTS=[
+  "Admitted to PCICU","Shifted to ward","Shifted to HDU","Started on IV medications","Hemodynamically stable throughout","Weaned off ventilator","Started oral feeds","Full feeds achieved","All lines removed","Wound inspection — healthy","Drain removed","Mobilized — walking","Clinically improving","Ready for discharge","Blood transfusion given","Diuresis achieved","Echo assessment done","Cath done","Surgery performed","Arrhythmia episode — managed","Fever spike — investigated","Antibiotics changed","New medication added","Medication uptitrated","Weight gain noted","Vitals stable","SpO₂ stable on room air","Parents counseled",
+];
+
+// ═══════ RED FLAGS ═══════
+const RED_FLAGS={
+  "Post-surgical":["Fever >101°F persisting >24h","Wound redness, swelling, pus, or gap","Sternal click or instability","Fast breathing or chest indrawing","New or worsening cyanosis","Poor feeding or refusal to feed","Excessive irritability or lethargy","Vomiting or abdominal distension","Decreased urine output","Swelling of face or feet","Bleeding from wound/drain site"],
+  "Post-cath":["Swelling/bleeding/bruise at puncture site","Limb cold, pale, or pulseless","Fever >101°F","New or worsening cyanosis","Fast breathing","Refusal to feed / lethargy","Blood in urine (post-device)"],
+  "Heart failure":["Increasing breathlessness","Worsening swelling — face/feet/abdomen","Sudden weight gain","Poor feeding / sweating during feeds","Persistent vomiting (drug toxicity risk)","Excessive drowsiness / reduced urine"],
+  "Cyanotic CHD":["Severe cyanotic spell — deep blue, limp","Increasing baseline cyanosis","Fast breathing at rest","Fever (abscess/IE risk)","Seizures or sudden limb weakness","Squatting episodes"],
+  "Pulmonary HTN":["Syncope/fainting","Increasing cyanosis/breathlessness","Chest pain on exertion","Coughing blood","Worsening exercise intolerance","New swelling feet/abdomen"],
+  "Post-device/PPM":["Wound redness/swelling/discharge","Fever >101°F","Hiccups/twitching near device","Dizziness/fainting/palpitations","Arm/face swelling on device side"],
+  "Kawasaki":["Recurrence of fever","New rash or joint swelling","Chest pain/breathlessness","Signs of bleeding (if on anticoagulation)"],
+  "IE":["Fever recurrence after Abx","Petechiae/splinter hemorrhages","Breathlessness worsening","Joint pain/swelling","Blood in urine","Sudden weakness/numbness"],
+  "Fontan/Glenn":["Increasing cyanosis","New/worsening edema","Abdominal distension/ascites","Chronic diarrhea (PLE)","Mucus plug cough (plastic bronchitis)","Fever — low threshold","Headache/visual changes (stroke)"],
+  "Rheumatic":["Recurrence of joint pain/swelling","New-onset chorea","Worsening breathlessness","Fever","Skin rash (erythema marginatum)","Missed Penidure injection — report immediately"],
+};
+
+// ═══════ SMART FOLLOW-UP RULES ═══════
+const FOLLOWUP_RULES={
+  "Post ASD device":{schedule:"1 week → 1 month → 3 months → 6 months → 1 year → annual",inv:["Echo","ECG"],meds:["Aspirin 5mg/kg/day ×6 months","Clopidogrel 1mg/kg/day ×3 months (if large device)"],ie:"Required",activity:["Avoid contact sports 1 month","No swimming 2 weeks"]},
+  "Post VSD device":{schedule:"1 week → 1 month → 3 months → 6 months → 1 year → annual",inv:["Echo","ECG","CXR"],meds:["Aspirin 5mg/kg/day ×6 months"],ie:"Required ×6 months (until endothelialized)",activity:["Avoid strenuous activity 4 weeks"]},
+  "Post PDA device/coil":{schedule:"1 week → 1 month → 6 months → 1 year",inv:["Echo"],meds:["Aspirin 5mg/kg/day ×6 months"],ie:"Required ×6 months",activity:["Avoid strenuous activity 2 weeks"]},
+  "Post balloon PV":{schedule:"1 week → 1 month → 3 months → 6 months → annual",inv:["Echo","ECG"],meds:[],ie:"Not required (if no residual)",activity:["No restrictions after 1 week"]},
+  "Post balloon CoA":{schedule:"1 week → 1 month → 3 months → 6 months → annual",inv:["Echo (4-limb BP)","ECG"],meds:["Antihypertensives if needed"],ie:"Required (CoA site)",activity:["Avoid isometric exercise"]},
+  "Post TOF ICR":{schedule:"1 week → 1 month → 3 months → 6 months → annual",inv:["Echo (RV function, PR)","ECG (RBBB, QRS width)","Holter (if arrhythmia concern)"],meds:["Diuretics if needed","Iron if anemic"],ie:"Required",activity:["Avoid strenuous activity 6 weeks","Gradual return to normal"]},
+  "Post ASO (TGA)":{schedule:"1 week → 1 month → 3 months → 6 months → annual",inv:["Echo (neo-aortic root, coronaries)","ECG"],meds:["Aspirin ×6 months (coronary reimplant)"],ie:"Required",activity:["No restrictions long-term after recovery"]},
+  "Post Glenn/BDG":{schedule:"1 week → 1 month → 3 months → 6 months → annual",inv:["Echo (Glenn flow, AV valve, ventricular function)","SpO₂ monitoring","CBC (polycythemia)"],meds:["Aspirin","Iron supplementation","Diuretics PRN"],ie:"Required",activity:["Avoid dehydration","Avoid altitude >2500m"]},
+  "Post Fontan":{schedule:"1 month → 3 months → 6 months → annual lifelong",inv:["Echo","LFT 6-monthly","CBC","Protein/albumin","24h urine protein annually"],meds:["Aspirin or Warfarin lifelong","Enalapril","Sildenafil (if elevated PVR)","Iron"],ie:"Required",activity:["Moderate exercise encouraged","Avoid dehydration","Avoid altitude"]},
+  "Post valve replacement (mechanical)":{schedule:"Weekly INR ×1 month → biweekly → monthly",inv:["INR (target 2.5-3.5)","Echo 3-monthly","LFT if on Warfarin"],meds:["Warfarin lifelong","Aspirin (if indicated)"],ie:"Required — lifelong",activity:["Avoid contact sports (bleeding risk)"]},
+  "Heart failure / DCM":{schedule:"2 weeks → 1 month → 3 months → 6 months",inv:["Echo (EF)","NT-proBNP","Renal function","Electrolytes","Digoxin level if on Digoxin"],meds:["ACEi/ARB","Carvedilol","Diuretics","Digoxin"],ie:"Not required unless structural",activity:["As tolerated"]},
+  "Pulmonary HTN":{schedule:"1 month → 3 months → 6 months → annual",inv:["Echo","6MWT","NT-proBNP","LFT (if on Bosentan)","SpO₂"],meds:["Sildenafil/Tadalafil","Bosentan/Ambrisentan","Combination therapy PRN"],ie:"Per underlying lesion",activity:["Avoid strenuous exertion","Avoid altitude","Avoid pregnancy (adolescent)"]},
+  "Kawasaki":{schedule:"2 weeks → 6 weeks → 3 months → 6 months → 1 year",inv:["Echo (coronaries) at each visit","ECG","Inflammatory markers at 2wk"],meds:["Aspirin low-dose ×6-8 weeks (normal coronaries)","Aspirin + Warfarin/LMWH (if aneurysm)"],ie:"Not routinely required",activity:["No restrictions (normal coronaries)","Restrict if giant aneurysm"]},
+  "IE treatment":{schedule:"2 weeks post Abx completion → 1 month → 3 months → 6 months",inv:["Echo","Blood culture","CRP/ESR","Renal function"],meds:["Complete Abx course","IE prophylaxis lifelong"],ie:"Required — lifelong",activity:["As tolerated after recovery"]},
+  "Post CoA repair":{schedule:"1 week → 1 month → 3 months → 6 months → annual",inv:["Echo + 4-limb BP","ECG"],meds:["Antihypertensives PRN"],ie:"Required",activity:["Avoid isometric exercises","Upper limb BP monitoring lifelong"]},
+};
+
+// ═══════ CLINICAL DECISION RULES ═══════
+const checkClinicalRules=(echoSel,priDx,surgeries,cathProcs,meds)=>{
+  const alerts=[];
+  const hasSevLVD=echoSel.some(e=>e.includes("severe (EF <30%)")||e.includes("moderate (EF 30-44%)"));
+  const hasACEi=meds.some(m=>["Enalapril","Captopril","Ramipril","Losartan","Sacubitril/Valsartan"].includes(m.drug.n));
+  const hasBB=meds.some(m=>["Carvedilol","Metoprolol"].includes(m.drug.n));
+  const hasProsthetic=surgeries.some(s=>s.includes("replacement")||s.includes("mechanical"));
+  const hasDevice=cathProcs.some(c=>c.includes("device")||c.includes("coil")||c.includes("stent"));
+  const hasPAH=echoSel.some(e=>e.includes("PAH"));
+  const hasSildenafil=meds.some(m=>m.drug.n==="Sildenafil");
+  const hasDigoxin=meds.some(m=>m.drug.n==="Digoxin");
+  const hasFuro=meds.some(m=>m.drug.n==="Furosemide"||m.drug.n==="Torsemide");
+  const hasWarfarin=meds.some(m=>m.drug.n==="Warfarin");
+  const isCyanotic=priDx.some(d=>d.includes("TOF")||d.includes("TGA")||d.includes("PA-")||d.includes("Tricuspid Atresia")||d.includes("Ebstein")||d.includes("Single Ventricle")||d.includes("Truncus")||d.includes("HLHS")||d.includes("DORV")||d.includes("TAPVC"));
+
+  if(hasSevLVD&&!hasACEi) alerts.push({type:"warn",msg:"EF <45% — consider adding ACEi/ARB (Enalapril/Losartan)"});
+  if(hasSevLVD&&!hasBB) alerts.push({type:"warn",msg:"EF <45% — consider adding Carvedilol (if not acutely decompensated)"});
+  if(hasProsthetic&&!hasWarfarin) alerts.push({type:"alert",msg:"Mechanical valve — Warfarin required (INR 2.5-3.5)"});
+  if(hasDevice) alerts.push({type:"info",msg:"Post-device — ensure Aspirin prescribed ×6 months. IE prophylaxis required."});
+  if(hasPAH&&!hasSildenafil) alerts.push({type:"warn",msg:"PAH documented — consider Sildenafil/Tadalafil if not already on therapy"});
+  if(hasDigoxin) alerts.push({type:"info",msg:"On Digoxin — Mon-Fri dosing, weekends off. Level monitoring. Target 0.5-0.9"});
+  if(hasFuro) alerts.push({type:"info",msg:"On loop diuretic — ensure K+ & Ca²⁺ supplementation. Monitor electrolytes."});
+  if(isCyanotic) alerts.push({type:"info",msg:"Cyanotic CHD — ensure Iron supplementation (3-6mg/kg/day). Monitor Hb for polycythemia."});
+  if(hasProsthetic) alerts.push({type:"alert",msg:"Prosthetic material — IE prophylaxis REQUIRED lifelong"});
+  return alerts;
+};
+
+// ═══════ STABLE SUB-COMPONENTS (outside App to prevent remount) ═══════
+const sChipStyle=(a)=>({display:"inline-block",padding:"4px 10px",margin:"2px",borderRadius:18,fontSize:11,fontFamily:F,cursor:"pointer",userSelect:"none",background:a?C.tagAct:C.tag,color:a?C.tagActTx:C.txt,border:`1px solid ${a?C.tagAct:C.bdr}`,fontWeight:a?600:400,transition:"all 0.12s"});
+const sInput={width:"100%",padding:"7px 10px",border:`1px solid ${C.bdr}`,borderRadius:6,fontSize:12,fontFamily:F,background:C.inp,color:C.txt,outline:"none",boxSizing:"border-box"};
+const sLbl={display:"block",fontSize:9,fontWeight:700,color:C.mut,marginBottom:2,textTransform:"uppercase",letterSpacing:0.5,fontFamily:F};
+
+function Sec({t,children}){return(<div style={{marginBottom:4}}><div style={{fontSize:11,fontWeight:700,color:t?.includes("⚠")?C.acc:C.hdL,margin:"10px 0 4px",paddingBottom:2,borderBottom:`2px solid ${C.tag}`,fontFamily:F}}>{t}</div>{children}</div>);}
+function Chips({items,sel,onTog}){return(<div style={{display:"flex",flexWrap:"wrap",gap:0,marginBottom:4}}>{items.map(i=><span key={i} style={sChipStyle(sel.includes(i))} onClick={()=>onTog(i)}>{sel.includes(i)?"✓ ":""}{i}</span>)}</div>);}
+function Fd({label,value,onChange,placeholder,rows,type="text",style={}}){return(<div style={{marginBottom:8,...style}}><label style={sLbl}>{label}</label>{rows?<textarea value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder} rows={rows} style={{...sInput,resize:"vertical"}}/>:<input type={type} value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder} style={sInput}/>}</div>);}
+function Row({children,gap=6}){return <div style={{display:"flex",gap,flexWrap:"wrap"}}>{children}</div>;}
+
+// ═══════ MAIN COMPONENT ═══════
+function App(){
+  const[pw,setPw]=useState(null);
+  const[step,setStep]=useState(0);
+  const[preview,setPreview]=useState(null);
+  const[generating,setGenerating]=useState(false);
+  const[copied,setCopied]=useState(false);
+
+  // Patient
+  const[pt,setPt]=useState({name:"",age:"",ageU:"months",sex:"Male",wt:"",ipNo:"",crNo:"",doa:today(),dod:today(),consultant:"",resident:"",ward:"Pediatric Cardiology Ward"});
+  // Diagnosis
+  const[priDx,setPriDx]=useState([]);const[priDxC,setPriDxC]=useState("");
+  const[assoc,setAssoc]=useState([]);const[syn,setSyn]=useState([]);const[nonC,setNonC]=useState([]);const[priorSx,setPriorSx]=useState("");
+  // Complaints
+  const[compl,setCompl]=useState([]);const[complC,setComplC]=useState("");
+  // Echo structured
+  const[ecSitus,setEcSitus]=useState([]);const[ecAV,setEcAV]=useState([]);const[ecVA,setEcVA]=useState([]);
+  const[ecLV,setEcLV]=useState([]);const[ecRV,setEcRV]=useState([]);const[ecShunt,setEcShunt]=useState([]);
+  const[ecPAH,setEcPAH]=useState([]);const[ecValve,setEcValve]=useState([]);const[ecOther,setEcOther]=useState([]);
+  const[ecEF,setEcEF]=useState("");const[ecCustom,setEcCustom]=useState("");
+  // ECG/CXR/Labs
+  const[ecgSel,setEcgSel]=useState([]);const[cxrSel,setCxrSel]=useState([]);const[labSel,setLabSel]=useState([]);const[labC,setLabC]=useState("");const[cathData,setCathData]=useState("");const[invOther,setInvOther]=useState("");
+  // Procedures
+  const[surg,setSurg]=useState([]);const[surgC,setSurgC]=useState("");const[surgDt,setSurgDt]=useState("");const[cpb,setCpb]=useState("");const[acc,setAcc]=useState("");const[dhca,setDhca]=useState(false);
+  const[cath,setCath]=useState([]);const[cathC,setCathC]=useState("");const[cathDt,setCathDt]=useState("");const[accSite,setAccSite]=useState([]);
+  const ACCESS=["R femoral vein","R femoral artery","L femoral vein","L femoral artery","R IJV","R radial","Umbilical vein","Umbilical artery"];
+  // Timeline
+  const[timeline,setTimeline]=useState([]);const[tlDay,setTlDay]=useState("1");const[tlCustom,setTlCustom]=useState("");
+  const[courseSel,setCourseSel]=useState([]);const[courseC,setCourseC]=useState("");const[icuD,setIcuD]=useState("");const[ventD,setVentD]=useState("");
+  // Discharge
+  const[dc,setDc]=useState({hr:"",rr:"",spo2:"",spo2On:"Room air",bp:"",feeding:"",wtDc:"",activity:"Active and alert"});
+  const DC_FEED=["Breastfeeding","Expressed BM","Formula feeds","Oral diet","NG feeds","Mixed BF+top-up","High-calorie formula","MCT feeds (chylothorax)"];
+  const DC_ACT=["Active and alert","Comfortable at rest","Limited — tires on exertion","On home O₂","Mild distress"];
+  // Meds
+  const[meds,setMeds]=useState([]);const[customMeds,setCustomMeds]=useState([]);const[drugSearch,setDrugSearch]=useState("");
+  // Follow-up
+  const[fuDate,setFuDate]=useState("");const[fuSchedule,setFuSchedule]=useState("");const[fuInv,setFuInv]=useState([]);
+  const[fuIE,setFuIE]=useState("Not required");const[fuVax,setFuVax]=useState([]);const[fuAct,setFuAct]=useState([]);const[fuDiet,setFuDiet]=useState([]);const[fuOther,setFuOther]=useState([]);
+  const FU_INV=["Echo","ECG","CXR","CBC","CRP/ESR","RFT","LFT","INR","Digoxin level","NT-proBNP","TFT","Holter","Blood culture","24h urine protein","SpO₂","4-limb BP","6MWT","Iron studies"];
+  const IE_OPT=["Not required","Required — Amoxicillin 50mg/kg PO 30-60min pre-procedure","Required — Clindamycin 20mg/kg if PCN-allergic","Required — lifelong (prosthetic material)"];
+  const VAX=["Continue NIS","RSV prophylaxis (Palivizumab)","Annual Influenza vaccine","Hold live vaccines 3mo","Pneumococcal vaccine","No modification needed","Delay vaccines 2wk post-op","Delay live vaccines 11mo (post-IVIG)"];
+  const ACT=["No restrictions","Avoid strenuous 4wk","Avoid strenuous 6wk","Avoid contact sports","No competitive sports","Light activity only","Avoid lifting 6wk","Gradual return","No swimming 4wk","School — resume 2wk","School — resume 4wk","School — resume 6wk","Avoid isometric exercise","Avoid altitude >2500m"];
+  const DIET=["Normal age-appropriate","High-calorie dense","Calorie-enriched EBM","MCT formula (chylothorax)","Low-fat (chylothorax)","Fluid restriction","Salt restriction","Small frequent feeds","NG if oral inadequate","Iron-rich diet","Adequate protein","Continue Vitamin D"];
+  const OTHER=["Monthly weight, 3mo length","Dental hygiene — IE ppx","Avoid crowds during LRTI season","Next surgery at (age/weight)","Staged palliation — next stage","Contact hospital before any procedure","IE prevention card given","Avoid pregnancy (PAH adolescent)","Genetic counseling","Developmental follow-up","Ophthalmology FU","ENT FU","Nephrology FU","Endocarditis prophylaxis wallet card"];
+  // Red flags
+  const[rfCat,setRfCat]=useState("Post-surgical");const[rfCustom,setRfCustom]=useState([]);
+  // Counseling
+  const COUNSEL=["Diagnosis explained","Prognosis discussed","Surgery/intervention plan explained","Medication names, doses, timing demonstrated","Red flags explained + handout given","Follow-up schedule explained","IE prophylaxis explained","Feeding/nutrition advice","Growth monitoring explained","Activity restrictions explained","Financial counseling done","Questions answered — parents understand"];
+  const[counselSel,setCounselSel]=useState([]);const[counselC,setCounselC]=useState("");
+
+  const wt=parseFloat(pt.wt)||0;
+
+  // Auto-set red flag category
+  useEffect(()=>{
+    if(pw==="postop")setRfCat("Post-surgical");
+    else if(pw==="cath")setRfCat("Post-cath");
+    else setRfCat("Heart failure");
+  },[pw]);
+
+  // Recalc drug doses on weight change
+  useEffect(()=>{if(!wt)return;setMeds(p=>p.map(m=>({...m,calc:calcDose(m.drug,wt)})));},[wt]);
+
+  const addDrug=(d)=>{if(meds.find(m=>m.drug.n===d.n))return;setMeds(p=>[...p,{id:uid(),drug:d,calc:calcDose(d,wt),dur:"",instr:d.nt||""}]);};
+
+  // Smart follow-up auto-populate
+  const autoFollowup=useCallback(()=>{
+    const keys=Object.keys(FOLLOWUP_RULES);
+    for(const k of keys){
+      const match=surg.some(s=>k.toLowerCase().split(" ").every(w=>s.toLowerCase().includes(w)))||
+        cath.some(c=>k.toLowerCase().split(" ").every(w=>c.toLowerCase().includes(w)))||
+        priDx.some(d=>k.toLowerCase().split(" ").every(w=>d.toLowerCase().includes(w)));
+      if(match){
+        const rule=FOLLOWUP_RULES[k];
+        setFuSchedule(rule.schedule);
+        setFuInv(rule.inv||[]);
+        setFuIE(rule.ie?.includes("Required")?IE_OPT.find(o=>o.includes("Required"))||IE_OPT[1]:"Not required");
+        if(rule.activity)setFuAct(rule.activity);
+        return k;
+      }
+    }
+    return null;
+  },[surg,cath,priDx]);
+
+  // Clinical alerts
+  const alerts=useMemo(()=>checkClinicalRules([...ecLV,...ecRV,...ecPAH,...ecOther],priDx,surg,cath,meds),[ecLV,ecRV,ecPAH,ecOther,priDx,surg,cath,meds]);
+
+  // ── STEPS ──
+  const STEPS=["Patient","Diagnosis","Complaints","Echo","ECG/CXR/Labs",pw==="postop"?"Surgery":pw==="cath"?"Cath Procedure":"—skip—","Timeline","Course","Discharge","Medications","Follow-up","Red Flags","Counseling","Preview"].filter(s=>s!=="—skip—");
+
+  // ═══ PATHWAY SELECT ═══
+  if(!pw){
+    const paths=[{key:"postop",icon:"🫀",t:"Post-Operative",d:"ICR, valve, shunt, Glenn, Fontan",c:C.opBdr,bg:C.opBg},{key:"cath",icon:"🩺",t:"Post-Cath",d:"Balloon, device, coil, stent, diagnostic",c:C.cathBdr,bg:C.cathBg},{key:"medical",icon:"💊",t:"Medical",d:"HF, PAH, arrhythmia, IE, Kawasaki, evaluation",c:C.medBdr,bg:C.medBg}];
+    return(<div style={{fontFamily:F,background:C.bg,minHeight:"100vh",padding:16,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center"}}>
+      <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+      <div style={{fontSize:42,marginBottom:6}}>🫀</div>
+      <div style={{fontSize:20,fontWeight:700,color:C.hd,marginBottom:2}}>Pediatric Cardiology</div>
+      <div style={{fontSize:13,color:C.mut,marginBottom:20}}>Discharge Summary Generator v3</div>
+      {paths.map(p=><div key={p.key} onClick={()=>setPw(p.key)} style={{background:p.bg,border:`2px solid ${p.c}`,borderRadius:12,padding:"14px 18px",marginBottom:8,cursor:"pointer",width:"100%",maxWidth:380}}>
+        <div style={{fontSize:20}}>{p.icon} <span style={{fontSize:15,fontWeight:700,color:C.hd}}>{p.t}</span></div>
+        <div style={{fontSize:11,color:C.mut}}>{p.d}</div>
+      </div>)}
+    </div>);
+  }
+
+  // ═══ RENDERERS ═══
+  const rPatient=()=>(<>{/*Demographics*/}<Sec t="Demographics"><Row><Fd label="Name" value={pt.name} onChange={v=>setPt({...pt,name:v})} placeholder="Full name" style={{flex:2}}/><div style={{flex:1,marginBottom:8}}><label style={sLbl}>Sex</label><div style={{display:"flex",gap:3}}>{["Male","Female","Ambiguous"].map(s=><span key={s} style={sChipStyle(pt.sex===s)} onClick={()=>setPt({...pt,sex:s})}>{s}</span>)}</div></div></Row><Row><Fd label="Age" value={pt.age} onChange={v=>setPt({...pt,age:v})} placeholder="e.g. 8" style={{flex:1}}/><div style={{flex:1,marginBottom:8}}><label style={sLbl}>Unit</label><div style={{display:"flex",gap:2}}>{["days","months","years"].map(u=><span key={u} style={sChipStyle(pt.ageU===u)} onClick={()=>setPt({...pt,ageU:u})}>{u}</span>)}</div></div><Fd label="Weight (kg)" value={pt.wt} onChange={v=>setPt({...pt,wt:v})} type="number" placeholder="kg" style={{flex:1}}/></Row></Sec><Sec t="Hospital Details"><Row><Fd label="IP No" value={pt.ipNo} onChange={v=>setPt({...pt,ipNo:v})} style={{flex:1}}/><Fd label="CR No" value={pt.crNo} onChange={v=>setPt({...pt,crNo:v})} style={{flex:1}}/></Row><Row><Fd label="DOA" value={pt.doa} onChange={v=>setPt({...pt,doa:v})} type="date" style={{flex:1}}/><Fd label="DOD" value={pt.dod} onChange={v=>setPt({...pt,dod:v})} type="date" style={{flex:1}}/></Row><Fd label="Ward" value={pt.ward} onChange={v=>setPt({...pt,ward:v})}/><Row><Fd label="Consultant" value={pt.consultant} onChange={v=>setPt({...pt,consultant:v})} style={{flex:1}}/><Fd label="Resident" value={pt.resident} onChange={v=>setPt({...pt,resident:v})} style={{flex:1}}/></Row></Sec></>);
+
+  const rDiagnosis=()=>(<>{Object.entries(DIAGNOSES).map(([cat,items])=><Sec key={cat} t={cat}><Chips items={items} sel={priDx} onTog={v=>tog(priDx,setPriDx,v)}/></Sec>)}<Fd label="Custom / Additional" value={priDxC} onChange={setPriDxC} placeholder="e.g. Large pmVSD with bidirectional shunt, severe PAH" rows={2}/><Sec t="Associated Anomalies"><Chips items={ASSOC_ANOM} sel={assoc} onTog={v=>tog(assoc,setAssoc,v)}/></Sec><Sec t="Syndromes"><Chips items={SYNDROMES} sel={syn} onTog={v=>tog(syn,setSyn,v)}/></Sec><Sec t="Non-Cardiac"><Chips items={NON_CARDIAC} sel={nonC} onTog={v=>tog(nonC,setNonC,v)}/></Sec><Sec t="Prior Surgeries/Interventions"><Fd label="" value={priorSx} onChange={setPriorSx} placeholder="e.g. PA band (2024), BAS at birth" rows={2}/></Sec></>);
+
+  const rComplaints=()=>(<><Sec t="Acute/Symptoms"><Chips items={COMPLAINTS.acute} sel={compl} onTog={v=>tog(compl,setCompl,v)}/></Sec><Sec t="Planned/Elective"><Chips items={COMPLAINTS.planned} sel={compl} onTog={v=>tog(compl,setCompl,v)}/></Sec><Fd label="Additional" value={complC} onChange={setComplC} placeholder="Duration, severity" rows={2}/></>);
+
+  const rEcho=()=>(<><Sec t="Situs"><Chips items={ECHO.situs} sel={ecSitus} onTog={v=>tog(ecSitus,setEcSitus,v)}/></Sec><Sec t="AV Connection"><Chips items={ECHO.avConn} sel={ecAV} onTog={v=>tog(ecAV,setEcAV,v)}/></Sec><Sec t="VA Connection"><Chips items={ECHO.vaConn} sel={ecVA} onTog={v=>tog(ecVA,setEcVA,v)}/></Sec><Sec t="LV Function"><Chips items={ECHO.lvFunc} sel={ecLV} onTog={v=>tog(ecLV,setEcLV,v)}/><Fd label="EF% (if measured)" value={ecEF} onChange={setEcEF} placeholder="e.g. 35" type="number"/></Sec><Sec t="RV Function"><Chips items={ECHO.rvFunc} sel={ecRV} onTog={v=>tog(ecRV,setEcRV,v)}/></Sec><Sec t="Shunt"><Chips items={ECHO.shunt} sel={ecShunt} onTog={v=>tog(ecShunt,setEcShunt,v)}/></Sec><Sec t="Pulmonary Artery Pressure"><Chips items={ECHO.pah} sel={ecPAH} onTog={v=>tog(ecPAH,setEcPAH,v)}/></Sec><Sec t="Valves"><Chips items={ECHO.valves} sel={ecValve} onTog={v=>tog(ecValve,setEcValve,v)}/></Sec><Sec t="Other Findings"><Chips items={ECHO.other} sel={ecOther} onTog={v=>tog(ecOther,setEcOther,v)}/></Sec><Fd label="Custom Echo" value={ecCustom} onChange={setEcCustom} placeholder="Additional findings" rows={2}/></>);
+
+  const rInv=()=>(<><Sec t="ECG"><Chips items={ECG} sel={ecgSel} onTog={v=>tog(ecgSel,setEcgSel,v)}/></Sec><Sec t="CXR"><Chips items={CXR} sel={cxrSel} onTog={v=>tog(cxrSel,setCxrSel,v)}/></Sec><Sec t="Labs">{Object.entries(LABS).map(([cat,items])=><div key={cat}><div style={{fontSize:10,fontWeight:600,color:C.hdL,margin:"4px 0 2px",fontFamily:F}}>{cat}</div><Chips items={items} sel={labSel} onTog={v=>tog(labSel,setLabSel,v)}/></div>)}</Sec><Fd label="Custom Lab Values" value={labC} onChange={setLabC} placeholder="Hb 9.2, CRP 48, BC: Staph aureus" rows={2}/>{(pw==="cath"||cathData)&&<Sec t="Cath Hemodynamics"><Fd label="" value={cathData} onChange={setCathData} placeholder="Qp:Qs, PVR, PVRI, saturations, gradients" rows={3}/></Sec>}<Sec t="Other Investigations"><Fd label="" value={invOther} onChange={setInvOther} placeholder="CT angio, MRI, genetics, metabolic, Holter" rows={2}/></Sec></>);
+
+  const rSurgery=()=>(<>{Object.entries(SURGERIES).map(([cat,items])=><Sec key={cat} t={cat}><Chips items={items} sel={surg} onTog={v=>tog(surg,setSurg,v)}/></Sec>)}<Fd label="Details" value={surgC} onChange={setSurgC} placeholder="Specific findings, approach" rows={2}/><Row><Fd label="Date" value={surgDt} onChange={setSurgDt} type="date" style={{flex:1}}/><Fd label="CPB (min)" value={cpb} onChange={setCpb} type="number" style={{flex:1}}/><Fd label="ACC (min)" value={acc} onChange={setAcc} type="number" style={{flex:1}}/></Row><span style={sChipStyle(dhca)} onClick={()=>setDhca(!dhca)}>{dhca?"✓ ":""}DHCA used</span></>);
+
+  const rCath=()=>(<>{Object.entries(CATH_PROCS).map(([cat,items])=><Sec key={cat} t={cat}><Chips items={items} sel={cath} onTog={v=>tog(cath,setCath,v)}/></Sec>)}<Fd label="Details" value={cathC} onChange={setCathC} placeholder="Device size, gradients pre/post" rows={2}/><Fd label="Date" value={cathDt} onChange={setCathDt} type="date"/><Sec t="Access Site"><Chips items={ACCESS} sel={accSite} onTog={v=>tog(accSite,setAccSite,v)}/></Sec></>);
+
+  // ═══ TIMELINE BUILDER ═══
+  const rTimeline=()=>(<><Sec t="Day-wise Timeline Builder">
+    <div style={{display:"flex",gap:6,marginBottom:8,alignItems:"flex-end"}}>
+      <Fd label="Day" value={tlDay} onChange={setTlDay} type="number" style={{width:60,flex:"none",marginBottom:0}}/>
+      <div style={{flex:1,marginBottom:0}}><label style={sLbl}>Event</label><select value={tlCustom} onChange={e=>setTlCustom(e.target.value)} style={{...sInput}}>
+        <option value="">Select event...</option>{TIMELINE_EVENTS.map(e=><option key={e} value={e}>{e}</option>)}
+      </select></div>
+      <button onClick={()=>{if(tlCustom){setTimeline(p=>[...p,{id:uid(),day:tlDay,event:tlCustom}]);setTlCustom("");}}} style={{padding:"7px 12px",background:C.hdL,color:"#fff",border:"none",borderRadius:6,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:F,marginBottom:0,whiteSpace:"nowrap"}}>+ Add</button>
+    </div>
+    <div style={{display:"flex",gap:6,marginBottom:8}}>
+      <input value={tlCustom} onChange={e=>setTlCustom(e.target.value)} placeholder="Or type custom event..." style={{...sInput,flex:1}}/>
+    </div>
+    {timeline.length>0&&<div style={{background:C.inp,borderRadius:8,padding:8,marginBottom:8}}>
+      {timeline.sort((a,b)=>a.day-b.day).map(t=><div key={t.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"3px 0",borderBottom:`1px solid ${C.bdr}`}}>
+        <span style={{fontSize:11,fontFamily:F}}><span style={{fontWeight:700,color:C.blu,fontFamily:FM}}>Day {t.day}</span> — {t.event}</span>
+        <span onClick={()=>setTimeline(p=>p.filter(x=>x.id!==t.id))} style={{cursor:"pointer",color:C.acc,fontWeight:700,fontSize:14}}>×</span>
+      </div>)}
+    </div>}
+    <div style={{fontSize:10,color:C.mut,fontFamily:F}}>💡 Smart phrases: "Hemodynamically stable throughout", "Weaned off ventilator on Day X", "ICU → Ward transition Day X"</div>
+  </Sec></>);
+
+  const rCourse=()=>{
+    const DATA=pw==="postop"?POSTOP_COURSE:pw==="cath"?POSTCATH_COURSE:MEDICAL_COURSE;
+    return(<>{Object.entries(DATA).map(([cat,items])=><Sec key={cat} t={cat}><Chips items={items} sel={courseSel} onTog={v=>tog(courseSel,setCourseSel,v)}/></Sec>)}<Fd label="Additional notes (optional)" value={courseC} onChange={setCourseC} placeholder="Free text" rows={2}/>{pw==="postop"&&<Row><Fd label="ICU Days" value={icuD} onChange={setIcuD} type="number" style={{flex:1}}/><Fd label="Ventilation Days" value={ventD} onChange={setVentD} type="number" style={{flex:1}}/></Row>}</>);
+  };
+
+  const rDischarge=()=>(<><Sec t="Vitals"><Row><Fd label="HR" value={dc.hr} onChange={v=>setDc({...dc,hr:v})} placeholder="/min" style={{flex:1}}/><Fd label="RR" value={dc.rr} onChange={v=>setDc({...dc,rr:v})} placeholder="/min" style={{flex:1}}/><Fd label="SpO₂%" value={dc.spo2} onChange={v=>setDc({...dc,spo2:v})} style={{flex:1}}/></Row><Row><div style={{flex:1,marginBottom:8}}><label style={sLbl}>SpO₂ on</label><div style={{display:"flex",flexWrap:"wrap",gap:2}}>{["Room air","O₂ 0.25L","O₂ 0.5L","O₂ 1L","O₂ 2L"].map(o=><span key={o} style={sChipStyle(dc.spo2On===o)} onClick={()=>setDc({...dc,spo2On:o})}>{o}</span>)}</div></div><Fd label="BP" value={dc.bp} onChange={v=>setDc({...dc,bp:v})} placeholder="mmHg" style={{flex:1}}/></Row></Sec><Sec t="Feeding"><Chips items={DC_FEED} sel={[dc.feeding]} onTog={v=>setDc({...dc,feeding:dc.feeding===v?"":v})}/></Sec><Sec t="Condition"><Chips items={DC_ACT} sel={[dc.activity]} onTog={v=>setDc({...dc,activity:dc.activity===v?"":v})}/></Sec><Fd label="Weight at Discharge (kg)" value={dc.wtDc} onChange={v=>setDc({...dc,wtDc:v})} type="number"/></>);
+
+  const rMeds=()=>{
+    const filtered=drugSearch?DRUGS.filter(d=>d.n.toLowerCase().includes(drugSearch.toLowerCase())||d.b.toLowerCase().includes(drugSearch.toLowerCase())||d.cat.toLowerCase().includes(drugSearch.toLowerCase())):DRUGS;
+    const grouped={};filtered.forEach(d=>{(grouped[d.cat]=grouped[d.cat]||[]).push(d);});
+    return(<>
+      {alerts.length>0&&<div style={{marginBottom:10}}>
+        {alerts.map((a,i)=><div key={i} style={{padding:"6px 10px",borderRadius:6,marginBottom:3,fontSize:11,fontFamily:F,background:a.type==="alert"?C.accSoft:a.type==="warn"?C.warnBg:C.bluBg,border:`1px solid ${a.type==="alert"?C.acc:a.type==="warn"?C.warn:C.blu}`,color:C.txt}}>
+          <span style={{fontWeight:700}}>{a.type==="alert"?"🚨":"⚡"}</span> {a.msg}
+        </div>)}
+      </div>}
+      <Sec t={`Drug Formulary${wt?` — ${wt}kg`:" — Enter weight"}`}>
+        <Fd label="Search" value={drugSearch} onChange={setDrugSearch} placeholder="Drug, brand, or category..."/>
+        {Object.entries(grouped).map(([cat,drugs])=><div key={cat} style={{marginBottom:6}}>
+          <div style={{fontSize:9,fontWeight:700,color:C.mut,textTransform:"uppercase",marginBottom:2,fontFamily:F}}>{cat}</div>
+          <div style={{display:"flex",flexWrap:"wrap",gap:2}}>{drugs.map(d=>{const on=meds.find(m=>m.drug.n===d.n);return<span key={d.n} onClick={()=>!on&&addDrug(d)} style={{...sChipStyle(!!on),background:on?C.grnBg:C.tag,color:on?C.grn:C.txt,borderColor:on?C.grn:C.bdr,fontSize:10}}>{on?"✓ ":"+ "}{d.n} <span style={{fontSize:8,opacity:0.7}}>({d.b.split("/")[0]})</span></span>})}</div>
+        </div>)}
+      </Sec>
+      {meds.length>0&&<Sec t="Selected Medications">
+        {meds.map((m,i)=><div key={m.id} style={{background:i%2===0?"#fafbfc":"#fff",padding:"6px 8px",borderRadius:6,marginBottom:3,border:`1px solid ${C.bdr}`}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <div><span style={{fontSize:12,fontWeight:700,color:C.hd}}>{i+1}. {m.drug.n}</span><span style={{fontSize:10,color:C.mut}}> ({m.drug.b})</span>
+            <div style={{fontSize:11,color:C.grn,fontWeight:600}}>→ {m.calc} — {m.drug.r}</div>
+            {m.drug.dil&&<div style={{fontSize:9,color:C.blu}}>💧 {m.drug.dil}</div>}
+            {m.drug.tabs&&<div style={{fontSize:9,color:C.mut}}>💊 Tabs: {m.drug.tabs.join(", ")}mg</div>}
+            {m.drug.combo&&<div style={{fontSize:9,color:"#7c3aed"}}>🔗 {m.drug.combo}</div>}
+            </div><span onClick={()=>setMeds(p=>p.filter(x=>x.id!==m.id))} style={{cursor:"pointer",color:C.acc,fontWeight:700,fontSize:14}}>×</span>
+          </div>
+          <Row gap={4}><Fd label="Duration" value={m.dur} onChange={v=>setMeds(p=>p.map(x=>x.id===m.id?{...x,dur:v}:x))} placeholder="e.g. 4wk" style={{flex:1,marginBottom:0,marginTop:3}}/><Fd label="Instructions" value={m.instr} onChange={v=>setMeds(p=>p.map(x=>x.id===m.id?{...x,instr:v}:x))} placeholder="Special instructions" style={{flex:2,marginBottom:0,marginTop:3}}/></Row>
+        </div>)}
+      </Sec>}
+      <Sec t="Custom Medications">
+        {customMeds.map(m=><div key={m.id} style={{padding:6,borderRadius:6,marginBottom:3,border:`1px dashed ${C.bdr}`}}>
+          <Row gap={4}><Fd label="Drug" value={m.name} onChange={v=>setCustomMeds(p=>p.map(x=>x.id===m.id?{...x,name:v}:x))} placeholder="Name (brand)" style={{flex:2,marginBottom:0}}/><Fd label="Dose" value={m.dose} onChange={v=>setCustomMeds(p=>p.map(x=>x.id===m.id?{...x,dose:v}:x))} placeholder="5mg BD PO" style={{flex:1,marginBottom:0}}/><Fd label="Duration" value={m.dur} onChange={v=>setCustomMeds(p=>p.map(x=>x.id===m.id?{...x,dur:v}:x))} placeholder="2wk" style={{flex:1,marginBottom:0}}/><span onClick={()=>setCustomMeds(p=>p.filter(x=>x.id!==m.id))} style={{cursor:"pointer",color:C.acc,fontWeight:700,alignSelf:"center",marginTop:12}}>×</span></Row>
+        </div>)}
+        <div onClick={()=>setCustomMeds(p=>[...p,{id:uid(),name:"",dose:"",dur:""}])} style={{padding:6,textAlign:"center",border:`1px dashed ${C.bdr}`,borderRadius:6,color:C.mut,cursor:"pointer",fontSize:11,fontFamily:F}}>+ Add Custom Medication</div>
+      </Sec>
+    </>);
+  };
+
+  const rFollowup=()=>{
+    const matched=autoFollowup();
+    return(<>
+      {matched&&<div style={{background:C.grnBg,border:`1px solid ${C.grn}`,borderRadius:6,padding:8,marginBottom:8,fontSize:11,fontFamily:F}}>
+        <span style={{fontWeight:700}}>🧠 Smart Follow-up: </span>Matched "{matched}"
+      </div>}
+      {fuSchedule&&<div style={{background:C.bluBg,border:`1px solid ${C.blu}`,borderRadius:6,padding:8,marginBottom:8,fontSize:11,fontFamily:F}}>
+        <span style={{fontWeight:700}}>📅 Schedule: </span>{fuSchedule}
+      </div>}
+      <Fd label="Next OPD Date" value={fuDate} onChange={setFuDate} type="date"/>
+      <Sec t="Investigations Before FU"><Chips items={FU_INV} sel={fuInv} onTog={v=>tog(fuInv,setFuInv,v)}/></Sec>
+      <Sec t="IE Prophylaxis"><Chips items={IE_OPT} sel={[fuIE]} onTog={v=>setFuIE(fuIE===v?"Not required":v)}/></Sec>
+      <Sec t="Vaccines"><Chips items={VAX} sel={fuVax} onTog={v=>tog(fuVax,setFuVax,v)}/></Sec>
+      <Sec t="Activity"><Chips items={ACT} sel={fuAct} onTog={v=>tog(fuAct,setFuAct,v)}/></Sec>
+      <Sec t="Diet"><Chips items={DIET} sel={fuDiet} onTog={v=>tog(fuDiet,setFuDiet,v)}/></Sec>
+      <Sec t="Other Advice"><Chips items={OTHER} sel={fuOther} onTog={v=>tog(fuOther,setFuOther,v)}/></Sec>
+    </>);
+  };
+
+  const rRedFlags=()=>{const cats=Object.keys(RED_FLAGS);const flags=RED_FLAGS[rfCat]||[];return(<><Sec t="Category"><Chips items={cats} sel={[rfCat]} onTog={v=>setRfCat(v)}/></Sec><div style={{background:C.accSoft,padding:8,borderRadius:6,marginBottom:6,border:"1px solid #f5b7b1"}}>{flags.map((f,i)=><div key={i} style={{fontSize:11,padding:"2px 0",fontFamily:F}}><span style={{color:C.acc,fontWeight:700}}>⚠{i+1}.</span> {f}</div>)}</div><Sec t="Custom Red Flags">{rfCustom.map((f,i)=><div key={i} style={{display:"flex",gap:4,marginBottom:3}}><input value={f} onChange={e=>{const a=[...rfCustom];a[i]=e.target.value;setRfCustom(a);}} style={{...sInput,flex:1}} placeholder="Custom red flag"/><span onClick={()=>setRfCustom(p=>p.filter((_,j)=>j!==i))} style={{cursor:"pointer",color:C.acc,fontWeight:700}}>×</span></div>)}<div onClick={()=>setRfCustom(p=>[...p,""])} style={{padding:5,textAlign:"center",border:`1px dashed ${C.bdr}`,borderRadius:6,color:C.mut,cursor:"pointer",fontSize:11}}>+ Add</div></Sec></>);};
+
+  const rCounseling=()=>(<><Sec t="Points Discussed"><Chips items={COUNSEL} sel={counselSel} onTog={v=>tog(counselSel,setCounselSel,v)}/></Sec><Fd label="Additional" value={counselC} onChange={setCounselC} placeholder="Specific points" rows={2}/></>);
+
+  // ═══ GENERATE ═══
+  const buildText=()=>{
+    const allDx=[...priDx,priDxC].filter(Boolean).join(", ");
+    const allCompl=[...compl,complC].filter(Boolean).join(", ");
+    const echoLines=[...ecSitus,...ecAV,...ecVA,...ecLV,...ecRV,...ecShunt,...ecPAH,...ecValve,...ecOther].filter(Boolean);
+    if(ecEF)echoLines.push(`EF: ${ecEF}%`);
+    if(ecCustom)echoLines.push(ecCustom);
+    const allCourse=[...courseSel,courseC].filter(Boolean);
+    const allMeds=[...meds.map(m=>`${m.drug.n} (${m.drug.b}) — ${m.calc} — ${m.drug.r}${m.dur?` — ${m.dur}`:""}${m.drug.dil?` [Prep: ${m.drug.dil}]`:""}${m.instr?` [${m.instr}]`:""}`),
+      ...customMeds.filter(m=>m.name).map(m=>`${m.name} — ${m.dose}${m.dur?` — ${m.dur}`:""}`)];
+    const allRF=[...(RED_FLAGS[rfCat]||[]),...rfCustom.filter(Boolean)];
+    const allCounsel=[...counselSel,counselC].filter(Boolean).join("; ");
+    let proc="";
+    if(pw==="postop")proc=`SURGERY: ${[...surg,surgC].filter(Boolean).join(", ")}${surgDt?` | Date: ${surgDt}`:""}${cpb?` | CPB: ${cpb}min`:""}${acc?` | ACC: ${acc}min`:""}${dhca?" | DHCA":""}`;
+    else if(pw==="cath")proc=`CATH PROCEDURE: ${[...cath,cathC].filter(Boolean).join(", ")}${cathDt?` | Date: ${cathDt}`:""}${accSite.length?` | Access: ${accSite.join(", ")}`:""}`;
+
+    return`DISCHARGE SUMMARY
+${"═".repeat(50)}
+
+PATIENT: ${pt.name||"[Name]"} | ${pt.age} ${pt.ageU} | ${pt.sex} | Wt: ${pt.wt||"—"}kg
+IP: ${pt.ipNo} | CR: ${pt.crNo} | DOA: ${pt.doa} | DOD: ${pt.dod}
+Ward: ${pt.ward} | Consultant: ${pt.consultant} | Resident: ${pt.resident}
+
+DIAGNOSIS
+${allDx||"—"}
+${assoc.length?`Associated: ${assoc.join(", ")}`:""}
+${syn.filter(s=>s!=="None").length?`Syndrome: ${syn.filter(s=>s!=="None").join(", ")}`:""}
+${nonC.filter(s=>s!=="None").length?`Non-cardiac: ${nonC.filter(s=>s!=="None").join(", ")}`:""}
+${priorSx?`Prior: ${priorSx}`:""}
+
+PRESENTING COMPLAINTS: ${allCompl||"—"}
+
+ECHOCARDIOGRAPHY
+${echoLines.join("; ")||"—"}
+
+ECG: ${ecgSel.join(", ")||"—"}
+CXR: ${cxrSel.join(", ")||"—"}
+${cathData?`CATH DATA: ${cathData}`:""}
+LABS: ${[...labSel,labC].filter(Boolean).join("; ")||"—"}
+${invOther?`OTHER: ${invOther}`:""}
+
+${proc}
+
+HOSPITAL COURSE
+${timeline.length?timeline.sort((a,b)=>a.day-b.day).map(t=>`Day ${t.day}: ${t.event}`).join("\n"):""}
+${allCourse.map(c=>`• ${c}`).join("\n")}
+${pw==="postop"&&icuD?`ICU: ${icuD}d | Ventilation: ${ventD||"0"}d`:""}
+
+CONDITION AT DISCHARGE
+HR: ${dc.hr||"—"} | RR: ${dc.rr||"—"} | SpO₂: ${dc.spo2||"—"}% on ${dc.spo2On}${dc.bp?` | BP: ${dc.bp}`:""}
+Feeding: ${dc.feeding||"—"} | Wt: ${dc.wtDc||"—"}kg | ${dc.activity||"—"}
+
+DISCHARGE MEDICATIONS
+${allMeds.length?allMeds.map((m,i)=>`${i+1}. ${m}`).join("\n"):"Nil"}
+
+FOLLOW-UP
+${fuSchedule?`Schedule: ${fuSchedule}\n`:""}OPD: ${fuDate||"—"}
+Investigations: ${fuInv.join(", ")||"Nil"}
+IE Prophylaxis: ${fuIE}
+${fuVax.length?`Vaccines: ${fuVax.join("; ")}`:""}
+${fuAct.length?`Activity: ${fuAct.join("; ")}`:""}
+${fuDiet.length?`Diet: ${fuDiet.join("; ")}`:""}
+${fuOther.length?`Other: ${fuOther.join("; ")}`:""}
+
+RED FLAGS — RETURN IMMEDIATELY IF:
+${allRF.map((r,i)=>`${i+1}. ${r}`).join("\n")}
+
+COUNSELING: ${allCounsel||"Diagnosis, prognosis, treatment and follow-up explained"}
+
+${"─".repeat(50)}
+Consultant: ${pt.consultant||"___"} | Resident: ${pt.resident||"___"}`;
+  };
+
+  const generateAI=async()=>{
+    setGenerating(true);
+    try{const raw=buildText();const resp=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:3000,messages:[{role:"user",content:`Senior pediatric cardiologist at Indian government hospital. Convert this structured data into a polished discharge summary. RULES: Concise & clinical. Hospital course → 3-8 sentence narrative from bullet points + timeline. Medications → numbered list with drug, brand, dose, route, frequency, duration, prep/dilution instructions. Keep section headings in CAPS. Do NOT add info not in data. Red flags → numbered list. Preserve all specifics.\n\nDATA:\n${raw}`}]})});const data=await resp.json();setPreview(data.content?.map(b=>b.text||"").join("")||raw);}catch{setPreview(buildText());}finally{setGenerating(false);}
+  };
+
+  const rPreview=()=>(<>{alerts.length>0&&<div style={{marginBottom:8}}>{alerts.map((a,i)=><div key={i} style={{padding:"5px 8px",borderRadius:6,marginBottom:2,fontSize:10,fontFamily:F,background:a.type==="alert"?C.accSoft:a.type==="warn"?C.warnBg:C.bluBg,border:`1px solid ${a.type==="alert"?C.acc:a.type==="warn"?C.warn:C.blu}`}}><b>{a.type==="alert"?"🚨":"⚡"}</b> {a.msg}</div>)}</div>}<div style={{display:"flex",flexWrap:"wrap",gap:4,marginBottom:10}}>
+    <button onClick={()=>setPreview(buildText())} style={{padding:"7px 12px",background:C.hd,color:"#fff",border:"none",borderRadius:6,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:F}}>📋 Plain</button>
+    <button onClick={generateAI} disabled={generating} style={{padding:"7px 12px",background:generating?C.mut:C.grn,color:"#fff",border:"none",borderRadius:6,fontSize:11,fontWeight:600,cursor:generating?"wait":"pointer",fontFamily:F}}>{generating?"⏳ AI...":"🧠 AI Narrative"}</button>
+    {preview&&<><button onClick={async()=>{try{await navigator.clipboard.writeText(preview);setCopied(true);setTimeout(()=>setCopied(false),2000);}catch{}}} style={{padding:"7px 12px",background:copied?C.grn:"#fff",color:copied?"#fff":C.hd,border:`1px solid ${copied?C.grn:C.hd}`,borderRadius:6,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:F}}>{copied?"✓ Copied":"Copy"}</button>
+    <button onClick={()=>{const w=window.open("","_blank");w.document.write(`<html><head><title>Discharge Summary</title><style>body{font-family:Georgia,serif;max-width:780px;margin:30px auto;padding:20px;font-size:13px;line-height:1.7;}pre{white-space:pre-wrap;font-family:Georgia,serif;font-size:13px;}</style></head><body><pre>${preview}</pre></body></html>`);w.document.close();w.print();}} style={{padding:"7px 12px",background:"#fff",color:C.hd,border:`1px solid ${C.hd}`,borderRadius:6,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:F}}>🖨️ Print</button></>}
+  </div>{preview?<div style={{background:"#fff",border:`1px solid ${C.bdr}`,borderRadius:8,padding:12,whiteSpace:"pre-wrap",fontSize:11,lineHeight:1.7,fontFamily:FM,color:C.txt,maxHeight:460,overflowY:"auto"}}>{preview}</div>:<div style={{textAlign:"center",padding:24,color:C.mut,fontSize:12}}>📋 Generate plain or AI narrative</div>}</>);
+
+  // ═══ STEP MAP ═══
+  const renderers=[rPatient,rDiagnosis,rComplaints,rEcho,rInv,...(pw==="postop"?[rSurgery]:pw==="cath"?[rCath]:[]),rTimeline,rCourse,rDischarge,rMeds,rFollowup,rRedFlags,rCounseling,rPreview];
+  const pathLabel=pw==="postop"?"Post-Op":pw==="cath"?"Post-Cath":"Medical";
+  const pathColor=pw==="postop"?C.opBdr:pw==="cath"?C.cathBdr:C.medBdr;
+
+  return(<div style={{fontFamily:F,background:C.bg,minHeight:"100vh",padding:"8px"}}>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+    <div style={{background:C.hdG,color:"#fff",padding:"10px 12px",borderRadius:10,marginBottom:8,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+      <div style={{display:"flex",alignItems:"center",gap:8}}><span style={{fontSize:22}}>🫀</span><div><div style={{fontSize:13,fontWeight:700}}>Discharge Summary</div><div style={{fontSize:10,opacity:0.8}}>{pathLabel} • v3 + PedCardDose</div></div></div>
+      <span onClick={()=>{if(confirm("Switch? Data lost.")){setPw(null);setStep(0);}}} style={{fontSize:10,padding:"3px 8px",background:"rgba(255,255,255,0.15)",borderRadius:6,cursor:"pointer"}}>Switch</span>
+    </div>
+    <div style={{display:"flex",overflowX:"auto",gap:1,marginBottom:8,background:C.card,borderRadius:8,padding:3}}>
+      {STEPS.map((s,i)=><button key={s+i} onClick={()=>setStep(i)} style={{padding:"5px 8px",fontSize:9,fontWeight:step===i?700:500,whiteSpace:"nowrap",background:step===i?C.hd:"transparent",color:step===i?"#fff":C.mut,border:"none",borderRadius:5,cursor:"pointer",fontFamily:F}}>{s}</button>)}
+    </div>
+    <div style={{background:C.card,borderRadius:10,padding:12,minHeight:260,maxHeight:"68vh",overflowY:"auto",borderTop:`3px solid ${pathColor}`}}>{renderers[step]&&renderers[step]()}</div>
+    <div style={{display:"flex",justifyContent:"space-between",marginTop:8}}>
+      <button onClick={()=>setStep(Math.max(0,step-1))} disabled={step===0} style={{padding:"8px 16px",background:step===0?C.tag:"#fff",color:step===0?C.mut:C.hd,border:`1px solid ${C.bdr}`,borderRadius:8,fontSize:12,fontWeight:600,cursor:step===0?"default":"pointer",fontFamily:F}}>← Back</button>
+      {step<renderers.length-1&&<button onClick={()=>setStep(step+1)} style={{padding:"8px 16px",background:C.hd,color:"#fff",border:"none",borderRadius:8,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:F}}>Next →</button>}
+    </div>
+  </div>);
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>

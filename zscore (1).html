@@ -1,0 +1,628 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>PedCardSuite — Z-Score Calculator</title>
+<meta name="description" content="Pediatric cardiac echo Z-score calculator. Detroit (Pettersen 2008) + McCrindle coronary (2007)." />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600;700;800&display=swap" rel="stylesheet" />
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body, #root { height: 100%; }
+  body {
+    background: #0f1117;
+    font-family: 'DM Sans', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -webkit-tap-highlight-color: transparent;
+  }
+  input[type=number]::-webkit-inner-spin-button,
+  input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+  input[type=number] { -moz-appearance: textfield; }
+  @keyframes slideIn { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:translateY(0); } }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+
+<script type="text/babel">
+const { useState, useMemo, useCallback } = React;
+
+/* ═══════════════════════════════════════════════════════════════════
+   PedCardSuite — Pediatric Cardiac Z-Score Calculator
+
+   STRUCTURAL Z-SCORES (21 structures):
+   Detroit Data: Pettersen MD, Du W, Skeens ME, Humes RA.
+   JASE 2008;21(8):922-934.   n = 782, age 1 day – 18 yr
+   Model: ln(y_cm) = β₀ + β₁·BSA + β₂·BSA² + β₃·BSA³
+   Z = [ln(observed_cm) − predicted_mean] / √MSE
+
+   CORONARY Z-SCORES (LMCA, pLAD, pRCA):
+   McCrindle BW et al. Circulation 2007;116:174-179.
+   Boston Children's normal cohort, n=221, age 0–18 yr.
+   Model: predicted(cm) = a·BSA^b − c;  SD = d + e·BSA
+   Z = (observed_cm − predicted) / SD
+
+   VALIDATION (Pettersen worked example p.927-928):
+     BSA=1.4 m², IVSd=0.4 cm → Z = −2.48  ✓
+   ═══════════════════════════════════════════════════════════════════ */
+
+const STRUCTURES = {
+  RVDd:  { label:"RV End-Diastolic Dim (RVDd)",     beta:[-0.317, 1.850,-1.274, 0.335], mse:0.058, r2:0.604, n:"M-mode, PSAX" },
+  IVSd:  { label:"IVS Diastole (IVSd)",             beta:[-1.242, 1.272,-0.762, 0.208], mse:0.046, r2:0.606, n:"M-mode, PSAX" },
+  IVSs:  { label:"IVS Systole (IVSs)",              beta:[-1.048, 1.751,-1.177, 0.318], mse:0.034, r2:0.695, n:"M-mode, PSAX" },
+  LVIDd: { label:"LV Diastolic Dim (LVIDd)",        beta:[ 0.105, 2.859,-2.119, 0.552], mse:0.010, r2:0.922, n:"M-mode, PSAX" },
+  LVIDs: { label:"LV Systolic Dim (LVIDs)",         beta:[-0.371, 2.833,-2.081, 0.538], mse:0.016, r2:0.875, n:"M-mode, PSAX" },
+  LVPWd: { label:"LVPW Diastole (LVPWd)",           beta:[-1.586, 1.849,-1.188, 0.313], mse:0.037, r2:0.739, n:"M-mode, PSAX" },
+  LVPWs: { label:"LVPW Systole (LVPWs)",            beta:[-0.947, 1.907,-1.259, 0.330], mse:0.023, r2:0.794, n:"M-mode, PSAX" },
+  AoV:   { label:"Aortic Valve Annulus",             beta:[-0.874, 2.708,-1.841, 0.452], mse:0.010, r2:0.934, n:"2D, PLAX, systole" },
+  SoV:   { label:"Sinuses of Valsalva",             beta:[-0.500, 2.537,-1.707, 0.420], mse:0.012, r2:0.916, n:"2D, PLAX, systole" },
+  STJ:   { label:"Sinotubular Junction",            beta:[-0.759, 2.643,-1.797, 0.442], mse:0.018, r2:0.878, n:"2D, PLAX, systole" },
+  TAA:   { label:"Transverse Aortic Arch",          beta:[-0.790, 3.020,-2.484, 0.712], mse:0.023, r2:0.865, n:"2D, SSN LAX, systole" },
+  AoI:   { label:"Aortic Isthmus",                  beta:[-1.072, 2.539,-1.627, 0.368], mse:0.027, r2:0.825, n:"2D, SSN LAX, systole" },
+  DAA:   { label:"Distal Aortic Arch",              beta:[-0.976, 2.469,-1.746, 0.445], mse:0.026, r2:0.792, n:"2D, SSN LAX, systole" },
+  AoDia: { label:"Aorta at Diaphragm",              beta:[-0.922, 2.100,-1.411, 0.371], mse:0.018, r2:0.842, n:"2D, SubC LAX, systole" },
+  PVann: { label:"Pulmonary Valve Annulus",          beta:[-0.761, 2.774,-1.808, 0.436], mse:0.023, r2:0.873, n:"2D, PLAX, systole" },
+  MPA:   { label:"Main Pulmonary Artery",           beta:[-0.707, 2.746,-1.807, 0.424], mse:0.024, r2:0.857, n:"2D, PSAX, systole" },
+  RPA:   { label:"Right Pulmonary Artery",          beta:[-1.360, 3.394,-2.508, 0.660], mse:0.027, r2:0.873, n:"2D, SSN SAX, systole" },
+  LPA:   { label:"Left Pulmonary Artery",           beta:[-1.348, 2.884,-1.954, 0.466], mse:0.028, r2:0.842, n:"2D, PSAX, systole" },
+  MVann: { label:"Mitral Valve Annulus",             beta:[-0.271, 2.446,-1.700, 0.425], mse:0.022, r2:0.826, n:"2D, A4C, diastole" },
+  TVann: { label:"Tricuspid Valve Annulus",          beta:[-0.164, 2.341,-1.596, 0.387], mse:0.036, r2:0.726, n:"2D, A4C, diastole" },
+  LA:    { label:"Left Atrium (AP)",                 beta:[-0.208, 2.164,-1.597, 0.429], mse:0.020, r2:0.801, n:"2D, PLAX, systole" },
+  LMCA:  { label:"Left Main Coronary (LMCA)",       model:"mccrindle", a:0.31747, b:0.36008, c:0.02887, sd_d:0.03040, sd_e:0.01514, n:"2D, PSAX" },
+  pLAD:  { label:"Prox LAD (pLAD)",                 model:"mccrindle", a:0.26108, b:0.37893, c:0.02852, sd_d:0.01465, sd_e:0.01996, n:"2D, PSAX" },
+  pRCA:  { label:"Prox RCA (pRCA)",                 model:"mccrindle", a:0.26117, b:0.39992, c:0.02756, sd_d:0.02407, sd_e:0.01597, n:"2D, PSAX" },
+};
+
+const CATEGORIES = [
+  { key:"aortic_arch",  label:"Aortic\nArch",        items:["TAA","AoI","DAA","AoDia"] },
+  { key:"aortic_root",  label:"Aortic\nRoot",        items:["AoV","SoV","STJ"] },
+  { key:"coronary",     label:"Coronary\nArteries",  items:["LMCA","pLAD","pRCA"] },
+  { key:"pulm_art",     label:"Pulmonary\nArteries", items:["PVann","MPA","RPA","LPA"] },
+  { key:"left_ch",      label:"Left\nChambers",      items:["LVIDd","LVIDs","LVPWd","LVPWs","MVann","LA"] },
+  { key:"right_ch",     label:"Right\nChambers",     items:["RVDd","TVann"] },
+  { key:"mmode",        label:"M-mode",              items:["RVDd","IVSd","IVSs","LVIDd","LVIDs","LVPWd","LVPWs"] },
+  { key:"valves",       label:"Valves",              items:["AoV","PVann","MVann","TVann"] },
+];
+
+const CATEGORY_GRID = [
+  ["aortic_arch","aortic_root"],
+  ["coronary","pulm_art"],
+  ["left_ch","right_ch"],
+  ["mmode","valves"],
+];
+
+const BSA_FORMULAS = {
+  Haycock:   (h,w) => 0.024265 * Math.pow(h,0.3964) * Math.pow(w,0.5378),
+  Mosteller: (h,w) => Math.sqrt((h*w)/3600),
+  DuBois:    (h,w) => 0.007184 * Math.pow(h,0.725) * Math.pow(w,0.425),
+};
+
+// ── Computation engine ───────────────────────────────────────────
+function predictedMeanLn(bsa, beta) {
+  return beta[0] + beta[1]*bsa + beta[2]*bsa*bsa + beta[3]*bsa*bsa*bsa;
+}
+function mccrindlePredCm(bsa, s) { return s.a * Math.pow(bsa, s.b) - s.c; }
+function mccrindleSD(bsa, s) { return s.sd_d + s.sd_e * bsa; }
+
+function calcZ(measuredMm, bsa, s) {
+  if (!measuredMm || measuredMm <= 0 || bsa <= 0) return null;
+  const cm = measuredMm / 10;
+  if (s.model === "mccrindle") {
+    const pred = mccrindlePredCm(bsa, s);
+    const sd = mccrindleSD(bsa, s);
+    if (sd <= 0) return null;
+    return (cm - pred) / sd;
+  }
+  const meanLn = predictedMeanLn(bsa, s.beta);
+  return (Math.log(cm) - meanLn) / Math.sqrt(s.mse);
+}
+
+function predictedMeanMm(bsa, s) {
+  if (bsa <= 0) return null;
+  if (s.model === "mccrindle") return mccrindlePredCm(bsa, s) * 10;
+  return Math.exp(predictedMeanLn(bsa, s.beta)) * 10;
+}
+
+function predictedRangeMm(bsa, s, zLow, zHigh) {
+  if (bsa <= 0) return [null, null];
+  if (s.model === "mccrindle") {
+    const pred = mccrindlePredCm(bsa, s);
+    const sd = mccrindleSD(bsa, s);
+    return [(pred + zLow * sd) * 10, (pred + zHigh * sd) * 10];
+  }
+  const meanLn = predictedMeanLn(bsa, s.beta);
+  const sd = Math.sqrt(s.mse);
+  return [Math.exp(meanLn + zLow * sd) * 10, Math.exp(meanLn + zHigh * sd) * 10];
+}
+
+function zColor(z) {
+  if (z === null) return "#555";
+  const a = Math.abs(z);
+  if (a <= 2) return "#4ade80";
+  if (a <= 3) return "#facc15";
+  if (a <= 4) return "#fb923c";
+  return "#ef4444";
+}
+function zSeverity(z) {
+  if (z === null) return "";
+  const a = Math.abs(z);
+  if (a <= 2) return "Normal";
+  if (a <= 3) return "Mild";
+  if (a <= 4) return "Moderate";
+  return "Severe";
+}
+
+// ── Style constants ──────────────────────────────────────────────
+const S = {
+  bg:"#0f1117", card:"#1a1b24", cardAlt:"#22232e", inputBg:"#181922",
+  border:"#2a2b38", accent:"#2a8a9a", accentGlow:"#35b8cc",
+  text:"#e8e8f0", textSec:"#a8a8b8", textDim:"#5c5c6e",
+  fontUI:"'DM Sans', system-ui, sans-serif",
+  fontMono:"'JetBrains Mono', 'SF Mono', monospace",
+};
+
+// ── Small components ─────────────────────────────────────────────
+function ZBar({ z }) {
+  const clamped = Math.max(-5, Math.min(5, z));
+  const pct = ((clamped + 5) / 10) * 100;
+  return (
+    <div style={{ flex:1, position:"relative", height:16, borderRadius:8, overflow:"hidden", background:S.bg }}>
+      <div style={{ position:"absolute", left:"30%", right:"30%", top:0, bottom:0,
+        background:"rgba(74,222,128,0.08)", borderLeft:"1px solid rgba(74,222,128,0.2)",
+        borderRight:"1px solid rgba(74,222,128,0.2)" }} />
+      <div style={{ position:"absolute", left:"50%", top:0, bottom:0, width:1, background:S.border }} />
+      <div style={{
+        position:"absolute", left:pct+"%", top:"50%", transform:"translate(-50%,-50%)",
+        width:10, height:10, borderRadius:"50%", background:zColor(z),
+        boxShadow:"0 0 8px "+zColor(z)+"50", transition:"left 0.3s ease, background 0.3s",
+      }} />
+      <span style={{ position:"absolute", left:4, top:"50%", transform:"translateY(-50%)", fontSize:7, color:S.textDim }}>−5</span>
+      <span style={{ position:"absolute", right:4, top:"50%", transform:"translateY(-50%)", fontSize:7, color:S.textDim }}>+5</span>
+    </div>
+  );
+}
+
+function StructureRow({ sKey, bsa, value, onChange }) {
+  const s = STRUCTURES[sKey];
+  const z = useMemo(() => calcZ(parseFloat(value), bsa, s), [value, bsa, s]);
+  const mean = useMemo(() => predictedMeanMm(bsa, s), [bsa, s]);
+  const rng = useMemo(() => predictedRangeMm(bsa, s, -2, 2), [bsa, s]);
+  const lo = rng[0], hi = rng[1];
+
+  return (
+    <div style={{
+      background:S.cardAlt, borderRadius:10, padding:"11px 13px",
+      borderLeft: z !== null ? "3px solid "+zColor(z) : "3px solid "+S.border,
+      transition:"border-color 0.3s", display:"flex", flexDirection:"column", gap:7,
+    }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:8 }}>
+        <div style={{ flex:1, minWidth:0 }}>
+          <div style={{ fontSize:12.5, fontWeight:700, color:S.text, lineHeight:1.3 }}>{s.label}</div>
+          {mean !== null && (
+            <div style={{ fontSize:10.5, color:S.textDim, marginTop:2, fontFamily:S.fontMono }}>
+              Mean {mean.toFixed(1)} &nbsp;·&nbsp; ±2Z: {lo !== null ? lo.toFixed(1) : ""}–{hi !== null ? hi.toFixed(1) : ""} mm
+            </div>
+          )}
+          <div style={{ fontSize:9.5, color:S.textDim, marginTop:1, fontStyle:"italic" }}>
+            {s.n}{s.model === "mccrindle" ? " · McCrindle 2007" : " · Pettersen 2008"}
+          </div>
+        </div>
+        <div style={{ display:"flex", alignItems:"center", gap:5, flexShrink:0 }}>
+          <input type="number" inputMode="decimal" step="any"
+            value={value} onChange={e => onChange(e.target.value)}
+            placeholder="—"
+            style={{
+              width:60, padding:"5px 6px", borderRadius:7,
+              border:"1px solid "+S.border, background:S.inputBg,
+              color:S.text, fontSize:14, fontWeight:700,
+              textAlign:"center", outline:"none", fontFamily:S.fontMono,
+            }} />
+          <span style={{ fontSize:10, color:S.textDim, fontWeight:600, width:22 }}>mm</span>
+        </div>
+      </div>
+      {z !== null && (
+        <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+          <ZBar z={z} />
+          <div style={{ textAlign:"right", flexShrink:0, minWidth:56 }}>
+            <div style={{ fontSize:17, fontWeight:800, color:zColor(z), fontFamily:S.fontMono, lineHeight:1 }}>
+              {z >= 0 ? "+" : ""}{z.toFixed(2)}
+            </div>
+            <div style={{ fontSize:9, fontWeight:700, color:zColor(z), letterSpacing:0.5, marginTop:1 }}>{zSeverity(z)}</div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function InfoModal({ onClose }) {
+  return (
+    <div onClick={onClose} style={{
+      position:"fixed", inset:0, zIndex:100, background:"rgba(0,0,0,0.75)",
+      display:"flex", alignItems:"center", justifyContent:"center", padding:16,
+    }}>
+      <div onClick={e => e.stopPropagation()} style={{
+        background:S.card, borderRadius:14, padding:20, maxWidth:440, width:"100%",
+        maxHeight:"82vh", overflowY:"auto", color:S.text, border:"1px solid "+S.border,
+      }}>
+        <h2 style={{ margin:0, fontSize:17, fontWeight:800, fontFamily:S.fontUI }}>About This Calculator</h2>
+        <div style={{ marginTop:12, fontSize:12.5, lineHeight:1.7, color:S.textSec }}>
+          <p style={{ margin:"0 0 10px" }}>
+            <strong>Structural Z-scores:</strong> Pettersen MD, Du W, Skeens ME, Humes RA.
+            "Regression equations for calculation of Z scores of cardiac structures
+            in a large cohort of healthy infants, children, and adolescents."
+            <em> J Am Soc Echocardiogr.</em> 2008;21(8):922-934.
+          </p>
+          <p style={{ margin:"0 0 10px" }}>
+            <strong>Cohort:</strong> 782 patients, age 1 day – 18 years, Children's Hospital of Michigan (Detroit).
+          </p>
+          <p style={{ margin:"0 0 10px" }}>
+            <strong>Model:</strong> ln(measurement<sub>cm</sub>) = β₀ + β₁·BSA + β₂·BSA² + β₃·BSA³
+            <br/>Z = [ln(observed<sub>cm</sub>) − predicted mean] / √MSE
+          </p>
+          <p style={{ margin:"0 0 10px" }}>
+            <strong>Coronary Z-scores:</strong> McCrindle BW et al.
+            <em> Circulation.</em> 2007;116:174-179. Boston Children's normal cohort (n=221, 0–18 yr).
+            <br/>Predicted(cm) = a·BSA<sup>b</sup> − c; &nbsp;SD = d + e·BSA
+          </p>
+          <p style={{ margin:"0 0 10px" }}>
+            <strong>BSA range:</strong> Pettersen cohort 0.12–2.0 m². Outside this range = extrapolation.
+          </p>
+          <div style={{
+            padding:"10px 12px", background:S.cardAlt, borderRadius:8,
+            borderLeft:"3px solid #facc15", fontSize:12,
+          }}>
+            <strong>⚠ Disclaimer:</strong> Educational and clinical decision support only.
+            Verify against original publication and institutional standards.
+          </div>
+          <div style={{ fontSize:10, color:S.textDim, marginTop:10 }}>
+            |Z| ≤ 2 Normal · 2–3 Mild · 3–4 Moderate · &gt;4 Severe
+          </div>
+        </div>
+        <button onClick={onClose} style={{
+          marginTop:14, width:"100%", padding:"10px", border:"none", borderRadius:9,
+          background:S.accent, color:"#fff", fontWeight:700, fontSize:13, cursor:"pointer",
+        }}>Close</button>
+      </div>
+    </div>
+  );
+}
+
+function SummaryModal({ onClose, vals, bsa }) {
+  const results = [];
+  const seen = new Set();
+  for (const cat of CATEGORIES) {
+    for (const sKey of cat.items) {
+      if (seen.has(sKey)) continue;
+      seen.add(sKey);
+      const v = parseFloat(vals[sKey]);
+      if (v > 0) {
+        const z = calcZ(v, bsa, STRUCTURES[sKey]);
+        const mean = predictedMeanMm(bsa, STRUCTURES[sKey]);
+        if (z !== null) results.push({ sKey, z, v, mean });
+      }
+    }
+  }
+  const abnormal = results.filter(r => Math.abs(r.z) > 2);
+
+  return (
+    <div onClick={onClose} style={{
+      position:"fixed", inset:0, zIndex:100, background:"rgba(0,0,0,0.75)",
+      display:"flex", alignItems:"center", justifyContent:"center", padding:16,
+    }}>
+      <div onClick={e => e.stopPropagation()} style={{
+        background:S.card, borderRadius:14, padding:20, maxWidth:460, width:"100%",
+        maxHeight:"85vh", overflowY:"auto", color:S.text, border:"1px solid "+S.border,
+      }}>
+        <h2 style={{ margin:0, fontSize:17, fontWeight:800 }}>Summary Report</h2>
+        {results.length === 0 ? (
+          <p style={{ color:S.textDim, marginTop:14, fontSize:12.5 }}>No measurements entered.</p>
+        ) : (
+          <React.Fragment>
+            <div style={{ marginTop:10, fontSize:11, color:S.textDim }}>
+              BSA {bsa.toFixed(3)} m² · {results.length} measurement{results.length !== 1 ? "s" : ""}
+              {abnormal.length > 0 && <span style={{ color:"#fb923c" }}> · {abnormal.length} abnormal</span>}
+            </div>
+            <div style={{ marginTop:10, display:"flex", flexDirection:"column", gap:5 }}>
+              {results.map((r, i) => (
+                <div key={i} style={{
+                  display:"flex", justifyContent:"space-between", alignItems:"center",
+                  padding:"7px 10px", borderRadius:7, background:S.cardAlt,
+                  borderLeft:"3px solid "+zColor(r.z),
+                }}>
+                  <div>
+                    <div style={{ fontSize:11.5, fontWeight:600, color:S.text }}>{STRUCTURES[r.sKey].label}</div>
+                    <div style={{ fontSize:9.5, color:S.textDim, fontFamily:S.fontMono }}>
+                      {r.v.toFixed(1)} mm (mean {r.mean.toFixed(1)})
+                    </div>
+                  </div>
+                  <span style={{ fontSize:15, fontWeight:800, color:zColor(r.z), fontFamily:S.fontMono }}>
+                    {r.z >= 0 ? "+" : ""}{r.z.toFixed(2)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </React.Fragment>
+        )}
+        <button onClick={onClose} style={{
+          marginTop:14, width:"100%", padding:"10px", border:"none", borderRadius:9,
+          background:S.accent, color:"#fff", fontWeight:700, fontSize:13, cursor:"pointer",
+        }}>Close</button>
+      </div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  MAIN APP
+// ══════════════════════════════════════════════════════════════════
+function App() {
+  const [height, setHeight] = useState("");
+  const [weight, setWeight] = useState("");
+  const [isMale, setIsMale] = useState(true);
+  const [bsaFormula, setBsaFormula] = useState("Haycock");
+  const [activeCat, setActiveCat] = useState(null);
+  const [vals, setVals] = useState({});
+  const [showInfo, setShowInfo] = useState(false);
+  const [showSummary, setShowSummary] = useState(false);
+
+  const h = parseFloat(height);
+  const w = parseFloat(weight);
+  const bsa = (h > 0 && w > 0) ? BSA_FORMULAS[bsaFormula](h, w) : 0;
+  const bsaWarning = bsa > 0 && (bsa < 0.12 || bsa > 2.1);
+
+  const setVal = useCallback((id, v) => setVals(prev => ({ ...prev, [id]: v })), []);
+
+  const catCounts = useMemo(() => {
+    const c = {};
+    for (const cat of CATEGORIES) {
+      let n = 0;
+      for (const sKey of cat.items) {
+        if (vals[sKey] && parseFloat(vals[sKey]) > 0) n++;
+      }
+      c[cat.key] = n;
+    }
+    return c;
+  }, [vals]);
+
+  const totalN = Object.values(catCounts).reduce((a, b) => a + b, 0);
+  const activeCatObj = CATEGORIES.find(c => c.key === activeCat);
+
+  return (
+    <div style={{
+      fontFamily:S.fontUI, background:S.bg, color:S.text,
+      minHeight:"100vh", maxWidth:520, margin:"0 auto", paddingBottom:48,
+    }}>
+      {/* ═══ Header ═══ */}
+      <div style={{
+        display:"flex", alignItems:"center", justifyContent:"space-between",
+        padding:"12px 16px", borderBottom:"1px solid "+S.border,
+        position:"sticky", top:0, background:S.bg, zIndex:50,
+      }}>
+        <div>
+          <div style={{ fontSize:16, fontWeight:800, letterSpacing:-0.3 }}>PedCardSuite</div>
+          <div style={{ fontSize:9.5, fontWeight:600, color:S.textDim, letterSpacing:1.5, textTransform:"uppercase" }}>
+            Z-Score · Pettersen 2008 + McCrindle 2007
+          </div>
+        </div>
+        <div style={{ display:"flex", gap:7 }}>
+          {totalN > 0 && (
+            <button onClick={() => setShowSummary(true)} style={{
+              background:S.cardAlt, border:"1px solid "+S.border, borderRadius:9,
+              padding:"5px 10px", cursor:"pointer", display:"flex", alignItems:"center", gap:4,
+              color:S.accentGlow, fontSize:10.5, fontWeight:700,
+            }}>
+              <span style={{ fontSize:13 }}>📋</span> {totalN}
+            </button>
+          )}
+          <button onClick={() => setShowInfo(true)} style={{
+            background:S.cardAlt, border:"1px solid "+S.border, borderRadius:9,
+            width:34, height:34, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center",
+            color:S.textDim, fontSize:15, fontWeight:800,
+          }}>ⓘ</button>
+        </div>
+      </div>
+
+      {/* ═══ Input Card ═══ */}
+      <div style={{ padding:"14px 14px 0" }}>
+        <div style={{
+          background:S.card, borderRadius:13, padding:14,
+          border:"1px solid "+S.border,
+          display:"flex", flexDirection:"column", gap:11,
+        }}>
+          <div style={{ display:"flex", gap:8 }}>
+            {[{ l:"Height", v:height, s:setHeight, u:"cm", p:"Height (cm)" },
+              { l:"Weight", v:weight, s:setWeight, u:"kg", p:"Weight (kg)" }].map(f => (
+              <div key={f.l} style={{ flex:1 }}>
+                <div style={{
+                  background:S.inputBg, borderRadius:9, border:"1px solid "+S.border,
+                  padding:"9px 12px", display:"flex", alignItems:"center", gap:5,
+                }}>
+                  <input type="number" inputMode="decimal" step="any"
+                    placeholder={f.p} value={f.v} onChange={e => f.s(e.target.value)}
+                    style={{
+                      background:"transparent", border:"none", outline:"none",
+                      color:S.text, fontSize:14, fontWeight:500, width:"100%",
+                      fontFamily:S.fontUI,
+                    }} />
+                  <span style={{ color:S.textDim, fontSize:11, fontWeight:600, flexShrink:0 }}>{f.u}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:8, flexWrap:"wrap" }}>
+            <button onClick={() => setIsMale(!isMale)} style={{
+              display:"flex", alignItems:"center", gap:5,
+              background: isMale ? S.accent : "#c026a8",
+              border:"none", borderRadius:18, padding:"5px 13px", cursor:"pointer",
+              transition:"background 0.25s",
+            }}>
+              <span style={{ fontSize:15, color:"#fff", fontWeight:700 }}>{isMale ? "♂" : "♀"}</span>
+              <span style={{ fontSize:11.5, color:"#fff", fontWeight:600 }}>{isMale ? "Male" : "Female"}</span>
+            </button>
+            {bsa > 0 && (
+              <div style={{
+                fontSize:12.5, fontWeight:700, fontFamily:S.fontMono,
+                color: bsaWarning ? "#fb923c" : S.accentGlow,
+                background:S.cardAlt, padding:"4px 11px", borderRadius:7,
+              }}>
+                BSA {bsa.toFixed(3)} m²
+                {bsaWarning && <span style={{ fontSize:9, marginLeft:5 }}>⚠ outside study range</span>}
+              </div>
+            )}
+          </div>
+
+          <div style={{ display:"flex", alignItems:"center", gap:7, flexWrap:"wrap" }}>
+            <span style={{ fontSize:10.5, color:S.textDim, fontWeight:600, letterSpacing:0.8, textTransform:"uppercase" }}>BSA</span>
+            <div style={{ display:"flex", gap:3 }}>
+              {Object.keys(BSA_FORMULAS).map(f => (
+                <button key={f} onClick={() => setBsaFormula(f)} style={{
+                  padding:"4px 10px", border:"none", borderRadius:6, fontSize:11.5, fontWeight:600,
+                  cursor:"pointer", transition:"all 0.2s",
+                  background: bsaFormula===f ? S.accent : S.cardAlt,
+                  color: bsaFormula===f ? "#fff" : S.textDim,
+                }}>{f}</button>
+              ))}
+            </div>
+          </div>
+
+          {/* ═══ Category Grid ═══ */}
+          <div style={{ display:"flex", flexDirection:"column", gap:7, marginTop:2 }}>
+            {CATEGORY_GRID.map((row, ri) => (
+              <div key={ri} style={{ display:"flex", gap:7 }}>
+                {row.map(catKey => {
+                  const cat = CATEGORIES.find(c => c.key === catKey);
+                  const isActive = activeCat === catKey;
+                  const count = catCounts[catKey];
+                  const lines = cat.label.split("\n");
+                  return (
+                    <div key={catKey} style={{ flex:1, position:"relative" }}>
+                      <button onClick={() => setActiveCat(isActive ? null : catKey)} style={{
+                        width:"100%",
+                        background: isActive ? S.accent : S.cardAlt,
+                        border: isActive ? "1px solid "+S.accentGlow : "1px solid "+S.border,
+                        borderRadius:11, padding:"13px 6px",
+                        cursor:"pointer", transition:"all 0.2s",
+                        display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:1,
+                      }}>
+                        {lines.map((line, i) => (
+                          <span key={i} style={{
+                            color: isActive ? "#fff" : S.textSec,
+                            fontWeight:700, fontSize:12.5, lineHeight:1.2, textAlign:"center",
+                          }}>{line}</span>
+                        ))}
+                      </button>
+                      {count > 0 && (
+                        <div style={{
+                          position:"absolute", top:-4, right:-4,
+                          background:S.accent, color:"#fff",
+                          width:17, height:17, borderRadius:9, fontSize:9.5, fontWeight:800,
+                          display:"flex", alignItems:"center", justifyContent:"center",
+                          boxShadow:"0 2px 6px rgba(0,0,0,0.5)",
+                        }}>{count}</div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* ═══ Measurement Panel ═══ */}
+      {activeCatObj && activeCatObj.items.length > 0 && (
+        <div style={{ padding:"10px 14px 0", animation:"slideIn 0.2s ease" }}>
+          <div style={{
+            background:S.card, borderRadius:13, padding:14,
+            border:"1px solid "+S.border,
+          }}>
+            <div style={{
+              fontSize:13.5, fontWeight:800, color:S.text, marginBottom:10,
+              display:"flex", alignItems:"center", justifyContent:"space-between",
+            }}>
+              <span>{activeCatObj.label.replace("\n"," ")}</span>
+              <span style={{ fontSize:10, color:S.textDim, fontWeight:600 }}>
+                {activeCatObj.items.length} structure{activeCatObj.items.length !== 1 ? "s" : ""}
+              </span>
+            </div>
+            {bsa <= 0 ? (
+              <div style={{
+                textAlign:"center", padding:"22px 14px", color:S.textDim, fontSize:12.5,
+                background:S.cardAlt, borderRadius:9,
+              }}>Enter height &amp; weight to enable Z-score calculation.</div>
+            ) : (
+              <div style={{ display:"flex", flexDirection:"column", gap:7 }}>
+                {activeCatObj.items.map(sKey => (
+                  <StructureRow key={sKey} sKey={sKey} bsa={bsa}
+                    value={vals[sKey] || ""} onChange={v => setVal(sKey, v)} />
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ═══ Quick Results ═══ */}
+      {bsa > 0 && totalN > 0 && !activeCat && (
+        <div style={{ padding:"10px 14px 0" }}>
+          <div style={{
+            background:S.card, borderRadius:13, padding:14, border:"1px solid "+S.border,
+          }}>
+            <div style={{ fontSize:10.5, fontWeight:700, color:S.textDim, marginBottom:8, letterSpacing:1, textTransform:"uppercase" }}>
+              All Entered Results
+            </div>
+            <div style={{ display:"flex", flexDirection:"column", gap:5 }}>
+              {(() => {
+                const seen = new Set();
+                return CATEGORIES.flatMap(cat =>
+                  cat.items.filter(sKey => {
+                    if (seen.has(sKey)) return false;
+                    seen.add(sKey);
+                    return vals[sKey] && parseFloat(vals[sKey]) > 0;
+                  }).map(sKey => {
+                    const z = calcZ(parseFloat(vals[sKey]), bsa, STRUCTURES[sKey]);
+                    if (z === null) return null;
+                    return (
+                      <div key={sKey} onClick={() => {
+                        const ownerCat = CATEGORIES.find(c => c.items.includes(sKey));
+                        if (ownerCat) setActiveCat(ownerCat.key);
+                      }} style={{
+                        background:S.cardAlt, borderRadius:8, padding:"7px 10px",
+                        borderLeft:"3px solid "+zColor(z), cursor:"pointer",
+                        display:"flex", justifyContent:"space-between", alignItems:"center",
+                      }}>
+                        <span style={{ fontSize:11.5, color:S.textSec, fontWeight:600 }}>
+                          {STRUCTURES[sKey].label}
+                        </span>
+                        <span style={{ fontSize:14, fontWeight:800, color:zColor(z), fontFamily:S.fontMono }}>
+                          {z >= 0 ? "+" : ""}{z.toFixed(2)}
+                        </span>
+                      </div>
+                    );
+                  })
+                );
+              })()}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showInfo && <InfoModal onClose={() => setShowInfo(false)} />}
+      {showSummary && <SummaryModal onClose={() => setShowSummary(false)} vals={vals} bsa={bsa} />}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>

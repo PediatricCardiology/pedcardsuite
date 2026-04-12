@@ -1,0 +1,2431 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>PedCardSuite — Echo Assistant</title>
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body, #root { height: 100%; }
+  body {
+    background: #0f1117;
+    -webkit-font-smoothing: antialiased;
+    -webkit-tap-highlight-color: transparent;
+  }
+  input[type=number]::-webkit-inner-spin-button,
+  input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+  input[type=number] { -moz-appearance: textfield; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+<script type="text/babel">
+const { useState, useRef } = React;
+const DEPT_EXAMPLES = `
+EXAMPLE 1:
+BEFORE: Visceroatrial Situs Solitus, Levocardia. AV - VA Concordance. IAS - Intact. IVS - Mild Valvular PS with Gmax: 20 mmHg. Normal RV and LV Function.
+CONCLUSION: CHD : Mild Valvular PS Normal RV and LV Function
+
+EXAMPLE 2:
+BEFORE: SPO2: 98%, Weight: 15.6 Kg. Situs Solitus, Mesocardia. AV - VA Concordance. IAS - Intact. IVS - Intact. Large PDA with left to right shunt, Gradient: 42/2 mmHg, size: 10.5 mm. Normal biventricular function.
+CONCLUSION: CHD: Large PDA with left to right shunt Normal biventricular function
+
+EXAMPLE 3:
+BEFORE: Spo2: 98%, Height: 126 cm, Weight: 19.9 Kg. Situs Solitus, Levocardia. PAPVC to RUPV to RA. AV - VA Concordance. IAS - Large sinus Venosus ASD with Left to right shunt. Additional PFO. Dilated RA & RV. Mild TR; TR Gmax: 45 mmHg. Doming Pulmonary Valve; Mild valvular PS; Gmax: 36 mmHg.
+CONCLUSION: CHD : Large sinus Venosus ASD with Left to right shunt Doming Pulmonary Valve ; Mild valvular PS Dilated RA & RV Good biventricular function No PAH
+
+EXAMPLE 4:
+BEFORE: Spo2: 97%, Wt: 63.6 Kg. Situs Solitus, Levocardia. AV - VA Concordance. IAS - Intact. IVS - Moderate size Perimembranous VSD restricted by RCC Prolapse with Left to Right shunt with G max: 95 mmHg. Mild AR. Normal RV and LV Function.
+CONCLUSION: CHD : Moderate size Perimembranous VSD with restricted by RCC Prolapse with L-->R shunt Mild AR Normal RV and LV Function
+
+EXAMPLE 5:
+BEFORE: SPO2: 96%. Situs Solitus, Levocardia. AV - VA Concordance. IAS - Intact. IVS - Large High Muscular Non Restrictive VSD with R-->L shunt. Mild TR. Severe PAH. Normal RV and LV Function.
+CONCLUSION: CHD: Large High Muscular Non Restrictive VSD with R-->L shunt Mild TR with Severe PAH
+
+EXAMPLE 6:
+BEFORE: SPO2: 75%, Weight: 30 Kg. Situs Solitus, Levocardia. AV Concordance. IAS - Appears Intact. TOF Large mal-aligned perimembranous VSD with >50% aortic override with bidirectional shunt. No additional VSD. Severe Infundibular & valvular PS.
+CONCLUSION: CHD: TOF with Confluent good size branch PAs Normal biventricular function
+
+EXAMPLE 7:
+BEFORE: Spo2: 82%, Wt: 31.9 Kg. S/P BDGS. Situs solitus, Levocardia. Tricuspid atresia. VA Concordance, NRGA. Large Ostium Secundum ASD with Right-Left Shunt. Large Perimembranous VSD with L-->R shunt.
+CONCLUSION: CHD: S/P BDGS, Well functioning BDGS Tricuspid atresia type 1
+
+EXAMPLE 8:
+BEFORE: SPO2: 72%, Wt: 34.3 kg. Situs Solitus, Levocardia. Well functioning right BD Glenn. AV - Concordance. DORV (200°) D-posed Aorta. Large Inlet VSD with bidirectional shunt. LV not routable to Aorta. Severe Infundibular & valvar PS.
+CONCLUSION: CHD- S/P right BDGS Well functioning right BD Glenn DORV (200°) Large Inlet VSD with bidirectional shunt Severe Infundibular & valvar PS Normal RV and LV Function
+
+EXAMPLE 9:
+BEFORE: Spo2: 85%, Weight: 7.9 Kg. Situs Inversus, Dextrocardia. IVC, LSVC --> Left sided RA. AV - Concordance. IAS - 11mm ostium secundum ASD with bidirectional shunt. IVS - Large Inlet VSD with Muscular extension with bidirectional shunt. LV appears routable to aorta. Severe Infundibular & valvar PS. Good Biventricular function.
+CONCLUSION: CHD: Situs Inversus, Dextrocardia D-TGA Large Inlet VSD with Muscular extension with bidirectional shunt LV appears routable to aorta Severe Infundibular & valvar PS Good flow seen in Confluent Branch PAs Good Biventricular function
+
+EXAMPLE 10:
+BEFORE: Spo2: 73%, Wt: 17.3 kg. Situs Ambiguous, Levocardia. Supracardiac TAPVC. AV Concordance. DORV D-posed aorta. IAS - Large ostium primum ASD & ostium secundum ASD with bidirectional shunt. Large VSD amounting to single ventricle. Common AV Valve. Pulmonary atresia.
+CONCLUSION: CHD: Situs Ambiguous, Levocardia Supracardiac TAPVC Complete Unbalanced AVSD, DORV Pulmonary atresia Normal ventricular function
+
+EXAMPLE 11:
+BEFORE: Spo2: 98%, Wt: 22.6 kg. Situs Solitus, Levocardia. AV - VA Concordance. PFO with left to right shunt. Small perimembranous VSD restricted by STL tissue with left to right shunt with Gmax: 85 mmHg. Mild TR. No RVOTO. No AR. Confluent branch PAs.
+CONCLUSION: CHD : Small perimembranous VSD restricted by STL tissue with left to right shunt LA & LV Normal size Mild TR, No AR No PAH Normal biventricular function
+
+EXAMPLE 12:
+BEFORE: Spo2: 99%, Weight: 28.8 Kg. Situs Solitus, Levocardia. AV - VA Concordance. IAS - Intact. Spontaneously closed VSD. Bicuspid Aortic valve; Moderate AR; No AS.
+CONCLUSION: CHD : Bicuspid Aortic valve with Moderate AR ; No AS Normal biventricular function
+
+EXAMPLE 13:
+BEFORE: Post BPV + PDA Stenting (BMS: 4x15). SPO2: 80%, Weight: 9.1 kg. Situs solitus, Levocardia. IAS: PFO with bidirectional shunt. IVS: Large conoventricular VSD with bidirectional shunt. No Additional VSDs. Severe infundibular, valvar & supra valvar PS with Gmax: 70 mmHg. PA annulus: 7.8 mm, MPA: 7.8 mm. Confluent fair size branch PAs. RPA origin: 6.9 mm, RPA hilum: 10 mm. LPA origin: 5.2 mm, LPA hilum: 8.0 mm. Moderate to severe TR (due to ATL prolapse). TV annulus: 21 mm. Trivial MR. Normal Biventricular function. PDA stent seen in situ. Well flowing PDA stent. Left aortic arch. No Coarctation. Normal coronaries, no coronary crossing RVOT.
+CONCLUSION: CHD: S/P BPV + PDA Stenting TOF Large conoventricular VSD with bidirectional shunt Severe Infundibular, Valvar & Supravalvar PS (Gmax 70 mmHg) Confluent fair size branch PAs Moderate to severe TR (ATL prolapse) Normal Biventricular function
+
+EXAMPLE 14:
+BEFORE: Spo2: 98%, Wt: 1.9 kg. Visceroatrial Situs Solitus, Levocardia. IVC, SVC --> RA. All PVs --> LA. AV-VA Concordance. IAS: High up ostium secundum ASD with L-R shunt (size: 6 mm). IVS: 3.5 mm posterior muscular VSD with Bidirectional shunt. Additional 1.5 mm apical Muscular VSD with Bidirectional shunt. All four chambers equally Dilated. Mild TR, Mild MR. No RVOTO, No PR. No LVOTO, No AR. Good size confluent Branch PAs. Normal RV and LV Function. Left Aortic Arch with Hypoplastic transverse arch with Mild flow acceleration across isthmus (with No significant gradient). Ascending aorta: 7 mm, Transverse arch: 4 mm, isthmus: 3 mm. Large PDA with Bidirectional shunt. Good biventricular function. Severe PAH.
+CONCLUSION: CHD: 3.5 mm posterior muscular VSD with Bidirectional shunt Additional 1.5 mm apical Muscular VSD with Bidirectional shunt All four chambers equally Dilated Left Aortic Arch with Hypoplastic transverse arch with Mild flow acceleration across isthmus (No significant gradient) Large PDA with Bidirectional shunt Good biventricular function Severe PAH
+
+EXAMPLE 15:
+BEFORE: Spo2: not stated. Wt: not stated. 4m 19d Female. Visceroatrial Situs solitus, Levocardia. IVC, SVC-RA, 3PVS-LA. Two Atria, Two Ventricle. Atrio Ventriculo Concordance, Vetriculo Arterial Concordance. Transitional AVCD (Rastelli Type-A). Normally Related Great vessels. Large Ostium Primum ASD with L-R shunt with Additional Ostium secundum Highup ASD with L-R shunt. IVS: Very Small inlet VSD restricted by superior bridging leaflet with L-R shunt. Moderate right AVVR+. Mild Left AVVR+. Dilated RA-RV. No RVOTO, No PR. No LVOTO, No AR. Good flow in confluent Branch PAs. Left Aortic Arch. No PDA/Coarctation. Normal biventricular Function. No PAH.
+CONCLUSION: CHD: Transitional AVCD Dilated RA-RV Normal biventricular Function No PAH
+
+EXAMPLE 16:
+BEFORE: SPO2: 80%, Weight: 18.9 Kg. Post Right BDG status. Well functioning right BDG. Situs solitus, Levocardia. IVC to RA, All PVs to LA. Common AV valve. Unbalanced AVSD. Aorta from MLV. IAS: Large ostium primum ASD with left to right shunt. IVS: Large Inlet VSD with left to right shunt. Hypoplastic RV. Mild AVVR. Forward flow from PA + with Gmax: 70 mmHg. No LVOTO. Confluent good size branch PA's. LPA: 12.2 mm, RPA: 11 mm. Normal ventricular function. Left aortic arch. No coarctation. No effusion.
+CONCLUSION: CHD: Post Right BDG Well functioning BDG Unbalanced AVSD Mild AVVR Confluent good size branch PAs Normal LV function
+
+EXAMPLE 17:
+BEFORE: Spo2: 82%, Weight: 3.7 kg. Visceroatrial Situs solitus, Levocardia. IVC, SVC-RA, All PVS-LA. Atrio Ventriculo concordance. IAS: Intact. Mild TR. No MR. IVS: Large subtruncal VSD with bidirectional shunt. LA & LV Dilated. VA Connection Truncus Arteriosus type I. Truncal Valve: Trileaflet. Good MPA Stump. RPA: 8 mm, LPA: 7 mm. No Subtruncal obstruction. Mild Truncal Valve Regurgitation. Left Aortic Arch. No COA/PDA. Good Biventricular Function. Early Diastolic flow reversal in aorta. Hyperkinetic PAH.
+CONCLUSION: CHD: Truncus Arteriosus type I LA & LV Dilated Good Biventricular Function Hyperkinetic PAH
+
+EXAMPLE 18:
+BEFORE: SPO2: 82%, Weight: 9.5 Kg. Visceroatrial Situs Solitus, Levocardia. IVC, SVC --> RA. No LSVC. All PV's --> LA. Ebstein's anomaly TV (severe form). Significantly plastered STL & PTL. Partially plastered ATL. True Tricuspid annulus: 33 mm. IAS: Two small ostium secundum ASD with right to left shunt. IVS: Intact. Severe TR, RVSP: 15 mmHg. Hugely dilated RA. Large atrialized RV. Small functional RV. No RVOTO. Confluent good sized branch PAs. LPA: 7.0 mm, RPA: 7.0 mm. Normal LV function. Left aortic arch. No PDA/Coarctation.
+CONCLUSION: CHD: Ebstein's anomaly of tricuspid valve (severe form) Small functional RV Severe TR (RVSP 15 mmHg) Small ASD with R-->L shunt Normal LV function
+
+EXAMPLE 19:
+BEFORE: SPO2: 93%. 1m 6d Male. Visceroatrial Situs solitus, Levocardia. IVC, SVC-RA. All 4 good size Pulmonary veins draining into common chamber behind LA --> Left Vertical vein --> Innominate vein --> RSVC --> RA. Obstruction at level of left sided Ascending Vertical vein, possibly getting Compressed between LPA and left bronchus. S/o Left Sided hemodynamic Vise, Gmax/Gmean: 29/14 mmHg. S/o obstructed Supra cardiac TAPVC. Confluence Size: 10 mm. No MR/AR. AV, VA concordance. IAS: PFO with R-->L shunt. IVS: Intact. IVS bulging towards LV. RA & RV Dilated. Mild TR. TR Gmax: 80 mmHg. Severe PAH. No RVOTO/LVOTO. NRGA. Dilated MPA & Branch PAs. Good Biventricular Function. Left Aortic Arch. No PDA/Coarctation.
+CONCLUSION: CHD: Obstructed Supracardiac TAPVC Confluent Dilated Branch PAs PFO with R-->L shunt Severe PAH
+
+EXAMPLE 20:
+BEFORE: Poor parasternal echo window. Visceroatrial Situs Solitus, Levocardia. IVC, SVC-RA. All PV's-->LA. AV Concordance. IAS: Intact. IVS: Large conoventricular VSD with inlet extension. No additional VSDs. Severe infundibular, valvar & supravalvar PS (near pulmonary atresia). Dilated RA & RV. MAP: 2 mm. PA annulus: 3 mm. Confluent branch PAs with Severe LPA origin stenosis. LPA origin: 3 mm, LPA hilum: 9 mm. RPA: 6 mm. Underfilled LV. Fair biventricular function. Tiny PDA with left to right shunt. Left Aortic Arch. No Coarctation.
+CONCLUSION: CHD: TOF near Pulmonary atresia Severe LPA origin stenosis
+
+EXAMPLE 21:
+BEFORE: SPO2: not stated. 2d Male. Visceroatrial Situs Solitus, Levocardia. AV-VA Concordance. IVC, SVC-->RA. All PV's-->LA. IAS: Moderate size ostium secundum ASD with R-->L Shunt. IVS: Intact. Hypertrophied, hypoplastic & bipartite RV. Mildly dysplastic bicuspid aortic valve. Aortic valve annulus: 10 mm. Tricuspid valve annulus: 5 mm. Pulmonary Atresia. Intact IVS. Hypoplastic TV. Confluent good size branch PAs. LPA: 4 mm, RPA: 4 mm. Normal Biventricular Function. Normal coronary. Left Aortic Arch. No Coarctation. Small to Moderate size PDA with L-->R Shunt.
+CONCLUSION: CHD: (S,D,X) PA with Intact IVS Hypoplastic & bipartite RV Hypoplastic TV Small to Moderate size PDA with L-->R shunt Confluent good size branch PAs
+
+EXAMPLE 22:
+BEFORE: SPO2: 95%, Wt: 2.7 kg. 1d Male. Visceroatrial Situs Solitus, Levocardia. IVC, SVC-->RA. All PV's-->LA. AV-VA Concordance. IAS: Restrictive PFO with L-->R shunt, mean Gradient: 6 mmHg. IVS: Intact. Hypoplastic mitral valve & LV with No MV inflow noted s/o mitral atresia. Tricuspid valve annulus: 14 mm (Z score +1.49). Mitral valve annulus: 5 mm (Z score -4.02). Dilated RA-RV. Dilated MPA, branch PAs. No RVOTO, No PR. Aortic atresia with Hypoplastic ascending aorta and transverse arch. Ascending aorta: 4.5 mm (Z score -5.54), transverse arch: 4 mm (Z score 3.9), isthmus: 3 mm (Z score -3.26). Moderate size PDA with evolving restriction at DTA end with pressure gradient of 28 mmHg shunting bidirectional, S/O Duct dependent systemic circulation. Ascending aorta & transverse arch being filled up retrogradely via PDA. Left Aortic Arch, No Coarctation. Normal Ventricular Function. Severe PAH.
+CONCLUSION: CHD: HLHS Mitral atresia with Intact IVS Restrictive PFO with L-->R shunt Aortic atresia with Hypoplastic arch Moderate size PDA with bidirectional shunt Duct dependent systemic circulation Normal Ventricular Function Severe PAH
+
+EXAMPLE 23:
+BEFORE: 28d Male. Situs Solitus, Dextrocardia. Bilateral SVC, LSVC to roof coronary sinus. Tricuspid Atresia (right AV valve). IAS: Large Ostium secundum ASD with R-->L shunt. IVS: Non restrictive bulboventricular foramen. No MR. Hypoplastic RV. Transposed great arteries. Aorta from right sided ventricle. D-posed great arteries. Hyperkinetic PAH. Confluent good size branch PAs. Tiny PDA with L-->R shunt. Left Aortic Arch. No Coarctation.
+CONCLUSION: CHD: Situs Solitus, Dextrocardia Tricuspid Atresia Transposed great arteries Hyperkinetic PAH
+
+EXAMPLE 24:
+BEFORE: 2d Female. Visceroatrial Situs Ambiguous. Mid liver. IVC & aorta on right side of spine. IVC draining into common atrium. No LSVC. All PVs draining into roof of common atrium. IAS: Large ostium primum ASD amounting to common atrium. IVS: Large Inlet VSD. Common AV valve, Mild AVVR. DORV. Pulmonary Atresia. LV to aorta not routable. D-posed aorta. Confluent branch PAs with RPA origin stenosis. LPA: 5 mm, RPA origin: 2.5 mm, RPA hilum: 4 mm. Left Aortic Arch, No Coarctation. Large PDA from base of innominate artery with left to right shunt (PDA length: 16 mm).
+CONCLUSION: CHD: Right Isomerism Complete AVCD DORV Pulmonary Atresia Large PDA from base of Innominate artery
+
+EXAMPLE 25:
+BEFORE: Spo2: 99%, Weight: 5.3 kg. Visceroatrial Situs Solitus, Levocardia. IVC, SVC--> RA. All PV's --> LA. AV - VA Concordance. IAS - PFO with left to right shunt. Dilated LA & LV. IVS - Intact. No RVOTO, No PR. No LVOTO, No AR. Normal biventricular function. Confluent branch PAs. Dilated RCA. Large coronary cameral fistula from RCA to base of RV below ATL with Left to right shunt. Entry point into RV size: 3.8 mm. Hyperkinetic PAH. Normal LMCA anatomy. Left Aortic Arch. No Coarctation. No PDA. Pan diastolic flow reversal.
+CONCLUSION: CHD: Large coronary cameral fistula from RCA to base of RV below ATL Left to right shunt Hyperkinetic PAH
+
+EXAMPLE 26:
+BEFORE: 14d Male. Visceroatrial Situs Solitus, Levocardia. IVC, SVC --> RA. All PV's --> LA. AV-VA Concordance, NRGA. DILV. IAS - PFO with left to right shunt. IVS - Large Inlet VSD +. Mild valvar & sub valvar PS with Gmax: 25 mmHg. Significantly dilated LA. Dysplastic Mitral valve. Severe MR (due to deficient AML tissue). No MS. MV annulus: 14 mm. TV annulus: 14 mm. Hypoplastic RV. Hyperkinetic PAH. Confluent good size branch PAs. Normal ventricular Function. Left Aortic Arch. Tiny PDA with left to right shunt. No Coarctation.
+CONCLUSION: CHD: Holmes heart DILV, NRGA Severe MR (due to deficient AML tissue) Mild PS Hyperkinetic PAH
+
+EXAMPLE 27:
+BEFORE: 7d Male. Visceroatrial Situs Solitus, Levocardia. IVC, SVC --> RA. All PV's --> LA. L looped ventricle. DILV. PA from LV, Aorta from outlet chamber. Aorta is right & anterior to PA. IAS - Small ostium secundum ASD with left to right shunt. IVS - Large bulbo ventricle foramen +. Grade II PR. Confluent good size branch PAs. RPA: 6 mm, LPA: 6.6 mm. Normal LV Function. Hypoplastic Left Aortic Arch, Almost amounting to interrupted aortic arch (type B). Moderate to large PDA continuous as DTA with left to right shunt.
+CONCLUSION: CHD: {S,L,D} DILV Large bulbo ventricular foramen + Small ostium secundum ASD with left to right shunt Hypoplastic Left Aortic Arch, Almost amounting to interrupted aortic arch (type B) Moderate to large PDA continuous as DTA with left to right shunt Normal LV function
+
+EXAMPLE 28:
+BEFORE: 1d Female. Visceroatrial Situs Solitus, Levocardia. Bilateral SVC, RSVC to RA, LSVC to LA. All PV's --> LA. AV - VA Concordance. DOLV. IAS - Moderate to Large ostium secundum ASD with Bidirectional shunt. IVS - Large Sub aortic VSD with Left to Right shunt. Mild TR. PA Completely committed to LV. Aorta committed to both ventricles. Severe Valvar & Sub Valvar PS. Smallish adequate RV. Side by side great arteries (aorta on Right side). Confluent fair size branch PA's. RPA: 3.5 mm, LPA: 2.7 mm. Normal Biventricular Function. Left Aortic Arch. No PDA/Coarctation.
+CONCLUSION: CHD: DOLV Large Sub aortic VSD with Left to Right shunt Severe Valvar & Sub Valvar PS Smallish adequate RV
+
+EXAMPLE 29:
+BEFORE: Spo2: 99%, Weight: 5.5 kg. Visceroatrial Situs Solitus, Levocardia. IVC, SVC --> RA. All PV's --> LA. AV - Concordance. DORV. D looped Ventricles. L posed aorta. IAS - Intact. IVS - Large Inlet VSD with sub pulmonic extension with Bidirectional shunt. Large Sub aortic VSD with Left to Right shunt. Large additional upper muscular VSD with Left to Right shunt. Trivial AR. LV to aorta routable. Severe Valvular & Sub Valvar PS, Gmax: 70 mmHg (good antegrade flow). Doming Pulmonary Valve. Pulmonary annulus: 10 mm. Confluent good size branch PA's. LPA: 9 mm, RPA: 9 mm. Normal Biventricular Function. Right Aortic Arch. Small PDA with Left to Right shunt. No Coarctation.
+CONCLUSION: CHD: Anatomically corrected malposed great arteries {S,D,L} DORV Large Inlet VSD with sub pulmonic extension with Bidirectional shunt Large Sub aortic VSD with Left to Right shunt Large additional upper muscular VSD with Left to Right shunt Severe Valvular & Sub Valvar PS (good antegrade flow) Small PDA with Left to Right shunt Normal biventricular function
+
+EXAMPLE 30:
+BEFORE: SPO2: 99%, Weight: 8 kg. Visceroatrial Situs Solitus, Levocardia. IVC, SVC --> RA. Bilateral SVC, LSVC to roofed CS. All PV's --> LA. AV - VA Concordance. IAS - Intact. IVS - Large perimembranous VSD significantly restricted by STL aneurysm with left to right shunt (overall small shunt) with Gmax: 60 mmHg. Single LV papillary muscle. Accessory MV tissue attached to LVOT. Parachute MV. No MS, No MR. Aortic valve Tricuspid with restricted mobility of NCC. Narrow LVOT due to diffuse sub aortic membrane. Severe sub valvular AS with Gradient: Pg/Mg: 100/50 mmHg. Aortic valve annulus: 11.8 mm. Mild to Moderate AR. Mild to Moderate TR. RVOT muscle bundle+, No significant RVOTO. Confluent good size branch PAs. Normal RV and LV function. Left aortic arch. Prominent anterior shelf+, No coarctation of aorta. No PDA.
+CONCLUSION: CHD: Large perimembranous VSD significantly restricted by STL aneurysm with left to right shunt (overall small shunt) Accessory MV tissue attached to LVOT Narrow LVOT due to diffuse sub aortic membrane Severe sub valvular AS Aortic valve Tricuspid with restricted mobility of NCC Mild to Moderate AR Parachute MV No MS, No MR RVOT muscle bundle+, No significant RVOTO
+
+EXAMPLE 31:
+BEFORE: SPO2: 98%, Weight: 12.4 kg. Visceroatrial Situs Inversus, Dextrocardia. IVC, SVC to left sided RA. All PV's --> right sided LA. AV - VA Discordance. D-posed aorta. D looped ventricles. IAS - Intact. IVS - Intact. Severe TR (right AV valve) due to dilated Annulus & Non-coapting STL & ATL. TR VC: 5.7 mm. Restricted mobility of STL. Tricuspid valve annulus: 23.6 mm. Dilated LA & MRV (Right sided). No MR. Mild sub valvar PS, Gmax: 25 mmHg. Mild PR. Regressed MLV (Left side). Normal RV and LV Function. Confluent good size branch PAs. LPA: 11 mm, RPA: 8.8 mm. Right Aortic Arch. No PDA/Coarctation of aorta.
+CONCLUSION: CHD: {I,D,D} Situs Inversus, Dextrocardia Cc-TGA Intact IVS Severe TR (Systemic AV Valve) due to dilated Annulus & Non-coapting STL & ATL Regressed MLV (Left side)
+
+EXAMPLE 32:
+BEFORE: SPO2: 90%, Weight: 6.3 kg. Visceroatrial Situs Solitus, Dextrocardia. Bilateral SVC, RSVC to coronary sinus to Left sided atrium. LSVC to left sided atrium. Right sided hepatic vein draining into IVC. IVC draining into Left sided atrium. Left sided hepatic veins draining separately into left sided atrium (close to IVC entry point). All PV's -->Left sided atrium. No venous drainage to right sided atrium. D looped ventricle. Balanced ventricles. IAS - Moderate to Large Ostium secundum ASD with Left to right shunt. IVS - Large conoventricular VSD (Sub aortic) with Bidirectional shunt. No TR, No MR. Pulmonary atresia. Thickened Aortic valve (Tricuspid). Mild AR. Confluent branch PAs with Moderate to Severe RPA origin stenosis. RPA hilum: 6 mm, RPA origin: 2.5 mm. LPA: 11 mm. MPA: 6 mm. Normal RV and LV function. Right aortic arch with Mirror image branching. Small to Moderate size PDA from undersurface of arch. No Coarctation.
+CONCLUSION: CHD: Situs Solitus, Dextrocardia TASVC to Left sided Atrium TOF with Pulmonary atresia Moderate size PDA from undersurface of arch Moderate to Severe RPA origin stenosis, smallish RPA
+
+EXAMPLE 33:
+BEFORE: SPO2: 96%, Weight: 10.5 kg. Visceroatrial Situs Solitus, Levocardia. IVC, SVC --> RA. All PV's --> LA. DILV. PA from MLV, Aorta from outlet chamber. D-posed aorta. L-looped ventricles. IAS - Intact. IVS - Large bulbo ventricular foramen. Mild MR. Mild TR. Doming pulmonary valve. Moderate to severe valvular PS with Gmax: 64 mmHg (overall increased Qp). Confluent dilated branch PAs. Normal ventricular function. Left aortic arch. No PDA/Coarctation.
+CONCLUSION: CHD: {S,L,D} DILV Doming pulmonary valve Moderate to severe valvular PS (overall increased Qp) Confluent dilated branch PAs Normal ventricular function
+
+EXAMPLE 34:
+BEFORE: Spo2: 96%, Weight: 8 kg. Visceroatrial Situs Solitus, Levocardia. IVC, SVC --> RA. All PV's --> LA. AV-VA Discordance. L looped ventricle. L posed Aorta. IAS - Intact. IVS - Large Inlet VSD with Mid muscular extension, predominantly Left to right shunt. Dilated LA & RV. Tethered STL. Hyperechoic tricuspid valve chordae & Papillary muscle. Moderate to severe TR. TV annulus: 14 mm. Supra tricuspid membrane +, Gradient: 20/10 mmHg. Mildly Doming Pulmonary valve. Moderate valvar PS, Gradient: 55 mmHg (partially flow related). Pulmonary valve annulus: 9 mm. Mild PR. Tricuspid Aortic & Pulmonary valve. Confluent good size branch PAs. Normal RV and LV Function. Left Aortic Arch. No PDA/Coarctation.
+CONCLUSION: CHD: Cc-TGA Large Inlet VSD with Mid muscular extension, predominantly Left to right shunt Supra tricuspid membrane +, Moderate to severe TR, Moderate TS Confluent good size branch PAs Normal biventricular function
+
+EXAMPLE 35:
+BEFORE: SpO2 92%. 3m 7d Male. Visceroatrial Situs Solitus, Levocardia. IVC, SVC --> RA. All PV's --> LA roof. Interrupted IVC. DORV. Common AV valve. AV - Concordance. Small ostium primum ASD with bidirectional shunt. Small ostium secundum ASD with bidirectional shunt. Septum primum Extreme malalignment. Large inlet VSD with bidirectional shunt. Grade II left AVVR. Moderate right AVVR. Severe PAH. Smallish LV. No LVOTO/RVOTO. Normal RV and LV Function. Confluent good size branch PAs. Tiny PDA with left to right shunt.
+CONCLUSION: CHD: Unobstructed Total anomalous pulmonary venous drainage Common AV valve Grade II left AVVR Moderate right AVVR DORV Smallish LV LV to aorta not routable Interrupted IVC Confluent good size branch PAs Severe PAH
+
+EXAMPLE 36:
+BEFORE: SPO2: 75%, Weight: 8.7 kg. Visceroatrial Situs Solitus, Levocardia. IVC, SVC --> RA. All PV's --> LA. AV concordance. IAS - Intact. IVS - Large conoventricular VSD with bidirectional shunt. Dilated RA & RV. Pulmonary atresia. Confluent branch PAs. RPA: 7.5 mm. Smallish LPA: 6 mm. Moderate size coronary collateral from LMCA to MPA. Normal RV and LV function. Left aortic arch. No Coarctation.
+CONCLUSION: CHD: TOF with pulmonary atresia Moderate size coronary collateral from LMCA to MPA Normal biventricular function
+
+EXAMPLE 37:
+BEFORE: SPO2: 91%, Weight: 5 kg. Situs Solitus, Levocardia. IVC, SVC --> RA. Left sided pulmonary veins and right lower pulmonary vein join together and form common chamber draining into SVC-RA junction. Right upper pulmonary vein drains separately to mid SVC. AV - VA Concordance. IAS - Moderate size ostium secundum ASD with R --> L shunt. IVS - Intact. Dilated RA & RV. Trivial TR, TR RVSP: 30 + RA mmHg. Mild PAH. No MR. No LVOTO, No RVOTO. Confluent good size branch PAs. Normal biventricular function. Left Aortic Arch. No PDA/Coarctation.
+CONCLUSION: CHD: Unobstructed supracardiac TAPVC to SVC-RA junction Right upper pulmonary vein draining separately to mid SVC Mild PAH
+
+EXAMPLE 38:
+BEFORE: SPO2: 75%, Weight: 8.7 kg. Visceroatrial Situs Solitus, Levocardia. IVC, SVC --> RA. All PV's --> LA. AV concordance. IAS - Intact. IVS - Large conoventricular VSD with bidirectional shunt. Dilated RA & RV. Pulmonary atresia. Confluent branch PAs. RPA: 7.5 mm. Smallish LPA: 6 mm. Moderate size coronary collateral from LMCA to MPA. Normal RV and LV function. Left aortic arch. No Coarctation.
+CONCLUSION: CHD: TOF with pulmonary atresia Moderate size coronary collateral from LMCA to MPA Normal biventricular function
+
+EXAMPLE 39:
+BEFORE: SPO2: 98%, Weight: 17.3 kg. Visceroatrial Situs Solitus, Levocardia. IVC, SVC --> RA. All PV's --> LA. AV - VA Concordance. IAS - Intact. IVS - Outlet VSD close off by significant RCC prolapse. Small to Moderate size RSOV to RV, Gradient: 84 mmHg. Trivial AR. AV annulus: 21 mm. Dilated LA & LV. Mild TR, No PAH. Mild MR. Normal biventricular function. Tiny PDA with Left to Right Shunt. Left Aortic Arch. No coarctation of aorta.
+CONCLUSION: CHD: Outlet VSD close off by significant RCC prolapse Small to Moderate size RSOV to RV Trivial AR Dilated LA & LV Tiny PDA+ Normal biventricular function
+
+EXAMPLE 40:
+BEFORE: Spo2: 66%. Visceroatrial Situs Solitus, Levocardia. IVC, SVC-RA. All PVS-LA. AV Concordance, VA Discordance. D-looped ventricle. IAS: Small to Moderate Ostium secundum ASD with Bidirectional shunt. IVS: Small to Moderate apical muscular VSD with Bidirectional shunt. Small Mid muscular VSD +. Regressed LV. D-malposed great Vessels. Aorta is right & anterior to PA. IVS bowing into LVOT. AV Annulus: 20 mm. Grade II TR, Tricuspid valve annulus: 28 mm. Mild MR, Mitral valve annulus: 19 mm. Pulmonary valve annulus: 18 mm. RA-RV dilated. Confluent good size Branch PAs (Coronary 1 LCX 2R). Normal Biventricular function. Left Aortic Arch. No PDA/Coarctation. Mild Pericardial effusion + on LA-LV side.
+CONCLUSION: CHD: D-TGA Small to Moderate apical muscular VSD with Bidirectional shunt Small Mid muscular VSD + IVS bowing into LVOT Regressed LV Normal Biventricular function
+
+EXAMPLE 41:
+BEFORE: Visceroatrial Situs Solitus, Levocardia. IVC, SVC --> RA. All PV's --> LA. AV - VA Concordance. IAS - Intact. IVS - Large Conoventricular VSD With Bidirectional Shunt. No Additional VSDs. RA & RV Dilated. Trivial TR, No MR. Rudimentary pulmonary valve. Free PR +. No evidence PS. MPA: 20 mm. Absent LPA. MPA Continues RPA. Severe RPA Origin stenosis, Gmax: 90 mmHg. RPA Origin: 6 mm, RPA: 33 x 40 mm. Confluent branch PAs. Normal RV and LV Function. Left Aortic Arch. No PDA/Coarctation.
+CONCLUSION: CHD: Large Conoventricular VSD Absent pulmonary valve, Free PR MPA Continues RPA, Absent LPA Severe RPA Origin stenosis
+
+EXAMPLE 42:
+BEFORE: Spo2: 86%, Weight: 20.8 kg. Visceroatrial Situs Solitus, Levocardia. IVC, SVC --> RA. All PV's --> LA. AV - VA Concordance. IAS - PFO with bidirectional shunt. IVS - Intact. No TR, No MR. No LVOTO/RVOTO. Mild LV dilatation. Normal RV and LV Function. Left Aortic Arch. No PDA/Coarctation. No Effusion. Extra Hepatic CPSS from left Renal vein to portal vein.
+CONCLUSION: Structurally Normal Heart Extra Hepatic CPSS from left Renal vein to portal vein
+
+EXAMPLE 43:
+BEFORE: Post PDA stenting status (DES: 3.5 x 15 mm & 3.5 x 8 mm). SPO2: 82%. Stent in good position. Well Flowing PDA stent. Mild Flow acceleration PFO with R-->L shunt (Size: 5 mm). Dilated IVC & Hepatic Veins. Confluent unobstructed branch PAs. Pulsatile Abdominal Aorta. RPA: 6.0 mm, LPA: 7.0 mm. Biventricular Hypertrophy. Bipartite RV. Tricuspid Annulus: 8.0 mm. Normal biventricular function. No effusion.
+CONCLUSION: CHD: S/P PDA Stenting Well flowing PDA stent Bipartite RV with Biventricular Hypertrophy Confluent unobstructed branch PAs PFO with R-->L shunt
+
+EXAMPLE 44:
+BEFORE: Visceroatrial Situs Solitus, Levocardia. Dilated IVC & Hepatic veins. IVC, SVC --> RA. All PV's --> LA. AV - VA Concordance. IAS - Intact. IVS - Intact. Dilated LA & LV. MV: AML & PML prolapse+, MV annulus: 30 mm. Hyperechoic MV chordae & lateral wall. Severe MR (MRVC: 8 mm). No LVOTO & RVOTO. Dilated RCA, LMCA & LAD. Flow reversal in LAD+. ALCAPA to RPA origin. LMCA comes very close to aortic valve & turns upward to RPA origin. Confluent fair size branch PAs. LPA: 13 mm, RPA: 10 mm. Normal RV and LV function. LVEF: 70%, FS: 41%, DD/DS: 56/33 mm. Left aortic arch. No PDA/Coarctation. Multiple coronary collaterals+.
+CONCLUSION: CHD: ALCAPA to RPA origin MV prolapse with Severe MR Multiple coronary collaterals+
+
+EXAMPLE 45:
+BEFORE: Spo2: 96%. Visceroatrial Situs Solitus, Dextrocardia. IVC, SVC --> RA. All PV's --> LA. Dilated IVC & hepatic veins. AV - VA Discordance. L-Looped Ventricle. L-Posed aorta. Aorta from left sided MRV. PA from right sided MLV. IAS - Small Ostium Secundum ASD with L-->R shunt. IVS - Large Inlet VSD with bidirectional shunt. Moderate right sided MR, Gmax 110 mmHg. Severe left sided TR. Accessory membrane attached to Tricuspid valve protruding into LVOT causing moderate to severe LVOTO. LVOT Gmax: 62 mmHg. Mild PR. Confluent dilated branch PAs. Normal LV Function, RV dysfunction+. Left Aortic Arch. No PDA/Coarctation of aorta.
+CONCLUSION: CHD: Situs Solitus, Dextrocardia CC TGA Large Inlet VSD with bidirectional shunt Severe TR, Moderate MR Accessory membrane attached to Tricuspid valve protruding into LVOT causing moderate to severe LVOTO Normal LV Function, RV dysfunction+
+
+EXAMPLE 46:
+BEFORE: Spo2: 81%, Weight: 7.7 kg. Visceroatrial Situs Solitus, Levocardia. IVC, SVC --> RA. All PV's --> LA. LV to aorta borderline routable (will require VSD enlargement). AV Concordance. DORV. IAS - Intact. IVS - Moderate to large posterior muscular VSD with subaortic extension with Bidirectional shunt. No additional VSDs. AV Annulus: 14.5 mm. Trivial TR. PV Annulus: 8.7, MPA: 10.5 mm. Posterior deviation of conal septum. Severe Sub valvar PS with Gmax: 64 mmHg. Confluent good size branch PAs. D posed aorta. Adequate size RV cavity. RV to PA route+. Normal RV and LV Function. Left Aortic Arch. No PDA/Coarctation.
+CONCLUSION: CHD: DORV Moderate to large posterior muscular VSD with subaortic extension with Bidirectional shunt LV to aorta borderline routable (will require VSD enlargement) Posterior deviation of conal septum Severe Sub valvar PS Normal RV and LV Function
+
+EXAMPLE 47:
+BEFORE: Spo2: 80%, Weight: 3.2 kg. Visceroatrial Situs Solitus, Levocardia. Side by side great arteries. IVC, SVC --> RA. All PV's --> LA. AV Concordance. DOLV. IAS - PFO with L-->R shunt. IVS - Moderate size subaortic VSD with Bidirectional shunt. Trivial TR. Severe subvalvar and valvar PS (predominantly valvar) with Gmax: 55 mmHg. Confluent Good size branch PAs. Normal RV and LV Function. Left Aortic Arch. Small to Moderate size PDA with L-->R shunt. No Coarctation.
+CONCLUSION: CHD: DOLV Moderate size subaortic VSD with Bidirectional shunt Severe subvalvar and valvar PS (predominantly valvar) Confluent Good size branch PAs Side by side great arteries Small to Moderate size PDA with L-->R shunt
+
+EXAMPLE 48:
+BEFORE: SPO2: 99%, Weight: 17.6 kg. Visceroatrial Situs Solitus, Levocardia. IVC, SVC --> RA. All PV's --> LA. AV - VA Concordance. IAS - Intact. IVS - Large Malaligned Perimembranous VSD with Left to right shunt. No additional VSDs. LA-LV dilated. No MR, Mild TR. Mild PR. Mildly doming Pulmonary valve, PV Annulus: 19 mm. Prominent conal septum causing moderate subvalvar RVOTO Gmax: 48 mmHg. Small non obstructive SAM caused by malaligned IVS crest. Confluent Good size branch PAs. Normal RV and LV Function. No PDA/Coarctation. Right Aortic Arch with aberrant LSCA.
+CONCLUSION: CHD: Large Malaligned Perimembranous VSD with Left to right shunt LA-LV dilated Prominent conal septum causing moderate subvalvar RVOTO Small non obstructive SAM caused by malaligned IVS crest Normal RV and LV Function Right Aortic Arch with aberrant LSCA
+
+EXAMPLE 49:
+BEFORE: SPO2: 98%, Wt: 4.9 kg. Visceroatrial Situs Solitus, Levocardia. IVC, SVC --> RA. Bilateral SVC. All PV's --> LA. AV - Concordance. DORV. IAS - Intact. IVS - Restrictive Posterior Muscular VSD with L-->R shunt. Gmax across VSD: 60 mmHg. Posterior deviation of conal septum. LV not routable to Aorta/PA. Moderate to severe Subvalvar PS, PS Gmax: 60 mmHg (Good antegrade flow). Confluent good size branch PAs. Mild PR, PR peak Gradient: 27 mmHg. Mild PAH. Normal RV and LV Function. Left Aortic Arch. No PDA/Coarctation.
+CONCLUSION: CHD: DORV (200%) Restrictive Posterior Muscular VSD with L-->R shunt Posterior deviation of conal septum LV not routable to Aorta/PA Moderate to severe Subvalvar PS (Good antegrade flow) Confluent good size branch PAs Mild PAH Normal RV and LV Function
+
+EXAMPLE 50:
+BEFORE: SPO2: 88% (RLL), 86% (RUL), Ht: 114 cm, Wt: 14.5 kg. Visceroatrial Situs Solitus, Levocardia. IVC, SVC --> RA. All PV's --> LA. AV - VA Concordance. IAS - Intact. IVS - Large Mid Muscular VSD With anterior muscular extension with Bidirectional Shunt. Trivial MR, Trivial TR. Normal RV and LV Function. Confluent dilated Pulmonary Arteries. No LVOTO/AR. No RVOTO. Mild PR, Peak PR Gmax: 55 mmHg. Severe PAH. Left Aortic Arch. Hypoplastic Distal arch & Isthmus with Severe Juxtaductal coarctation of Aorta with Pan diastolic Spill. Gradient across Coarctation segment: 45/18 mmHg. Ascending Aorta: 16.5 mm, Proximal Transverse arch: 9.5 mm, Distal transverse arch: 5.1 mm, Isthmus: 3.5 mm. Damp DTA trace.
+CONCLUSION: CHD: Large Mid Muscular VSD With anterior muscular extension with Bidirectional Shunt Hypoplastic Distal arch & Isthmus with Severe Juxtaductal coarctation of Aorta with Pan diastolic Spill Severe PAH
+
+EXAMPLE 51:
+BEFORE: SPO2: 99%, Weight: 4.6 kg. Visceroatrial Situs Solitus, Levocardia. Left Juxta posed RA Appendage. IVC, SVC --> RA. PV-LA. AV - VA Concordance. D-looped Ventricles. NRGA. IAS - Large ostium secundum ASD with L-R shunt (size: 8 mm). IVS - Restrictive perimembranous VSD restricted by STL tissue with L-R shunt (Gmax: 60 mmHg). Mild TR. Overriding of tricuspid valve. Two good size ventricles. Dilated Ascending aorta. Normal RV and LV function. Subaortic conus+. Narrow LVOT (Narrowest: 6.2 mm). Bicuspid aortic valve. No significant AS, No AR. Left aortic arch. No PDA/Coarctation.
+CONCLUSION: CHD: Large ostium secundum ASD with L-R shunt Grade I straddling of Tricuspid valve Restrictive perimembranous VSD restricted by STL tissue with L-R shunt Subaortic conus+ Narrow LVOT Bicuspid aortic valve, No significant AS, No AR Normal RV and LV function
+
+EXAMPLE 52:
+BEFORE: SPO2: 80%, WT: 2.9 kg. Visceroatrial Situs Solitus, Levocardia. IVC, SVC --> RA. All PV's --> LA roof. TAPVD. AV - VA Concordance. IAS - Large malaligned ostium secundum ASD with Right to Left shunt. IVS - Large conoventricular VSD with B-D shunt. RA & RV Dilated. Pulmonary atresia. Normal RV and LV Function. Right Aortic Arch with aberrant LSCA. P/o right sided PDA from left innominate and left sided PDA from undersurface of arch supplying ipsilateral hypoplastic branch PAs. No Coarctation.
+CONCLUSION: CHD: TAPVD TOF Pulmonary atresia Right Aortic Arch with aberrant LSCA P/o bilateral PDAs supplying ipsilateral hypoplastic branch PAs RA & RV Dilated Normal biventricular function
+`;
+
+const CONCLUSION_SYSTEM_PROMPT = `You are an expert pediatric cardiologist assistant at UN Mehta Institute of Cardiology & Research Centre, trained to generate echo report conclusions that exactly match our department's style.
+
+Study these department examples carefully:
+${DEPT_EXAMPLES}
+
+Your task: Generate a conclusion for a pediatric echocardiography report.
+
+Rules:
+1. Always start with "CHD:" (or "Normal 2D Echo and Doppler study" if truly normal)
+2. Use segmental analysis order: situs (only if inversus/ambiguous) → cardia (only if dextrocardia) → AV relationship → VA relationship (state CCTGA/L-TGA if discordant × 2) → L-loop ventricle (if present) → PS or PAH (as per case)
+3. Summarize structural findings concisely — no verbose sentences, use the same terse style as examples
+4. Include: structural diagnosis, associated lesions, shunt direction, chamber effects (dilation), ventricular function, PAH status if relevant
+5. Use exact department abbreviations: L-->R shunt, R-->L shunt, Gmax, Biventricular function, BDGS, RVOTO, LVOTO, etc.
+6. Do NOT repeat information — each element once
+7. Do NOT comment on normal situs/concordance/levocardia unless abnormal
+8. Do NOT invent findings not in the report
+9. Keep it concise — match the brevity of the examples
+
+9. SAFETY RULE: If findings are ambiguous, incomplete, or contradictory, do not guess. Omit the uncertain element entirely rather than risk a hallucinated lesion.
+
+10. AVSD BALANCING RULE: Always say "Complete Balanced AVSD" unless the report EXPLICITLY mentions RV hypoplasia or LV hypoplasia. Never write "Unbalanced" unless ventricular hypoplasia is stated. A common AV valve with ostium primum ASD + inlet VSD = Complete Balanced AVSD by default.
+
+11. EBSTEIN ANOMALY RULE: Ebstein anomaly involves apical displacement of the tricuspid valve with atrialization of the RV. Conclusion format:
+    "CHD: Ebstein anomaly of tricuspid valve [severity TR] Atrialized RV [ASD/PFO if present with shunt direction] [ventricular function]"
+    Always mention: degree of TR, atrialized RV, any ASD/PFO.
+
+12. COMPOSITE DIAGNOSIS NAMING RULE: For these diagnoses, ALWAYS name the diagnosis label first (right after "CHD:"), BEFORE listing component findings. Never list VSD + RVOTO + override without calling it TOF. Never list AV valve + primum ASD + inlet VSD without calling it AVSD.
+    - TOF → "CHD: TOF ..."
+    - PA atresia with VSD → "CHD: PA atresia with VSD ..."
+    - D-TGA or L-TGA → "CHD: D-TGA ..." or "CHD: L-TGA ..."
+    - DORV → "CHD: DORV ..."
+    - TAPVC → "CHD: Supracardiac/Cardiac/Infracardiac TAPVC ..."
+    - Complete AVSD → "CHD: Complete Balanced AVSD ..." (or Unbalanced only if hypoplasia stated — see Rule 10)
+    - Truncus Arteriosus → "CHD: Truncus Arteriosus ..."
+    - Ebstein anomaly → "CHD: Ebstein anomaly of tricuspid valve ..." (see Rule 11)
+    - Tricuspid Atresia → "CHD: Tricuspid atresia ..."
+    - S/P surgical history → Start with "CHD: S/P [procedure] ..."
+    - CCTGA (congenitally corrected TGA) → "CHD: CCTGA AV discordance VA discordance L-loop LV ..."
+
+13. L-LOOP / CCTGA RULE: When the report describes L-loop ventricles (ventricular inversion), congenitally corrected TGA, AV discordance + VA discordance, or "corrected transposition", the conclusion MUST:
+    a) State "CCTGA" OR "AV discordance VA discordance" explicitly — do NOT omit the double discordance
+    b) State "L-loop LV" or "L-looped ventricles" or "ventricular inversion" — this is the anatomically critical finding
+    c) Format: "CHD: CCTGA AV discordance VA discordance L-loop LV [associated lesions: VSD/PS/TR if present] [systemic RV function]"
+    d) If systemic RV is mentioned or TR is present: note "systemic RV" — TR gradient in CCTGA reflects systemic pressure, NOT PAH
+    e) NEVER omit the L-loop from the conclusion — it changes the entire clinical management
+
+Respond with ONLY the conclusion text, nothing else.`;
+
+const ONTOLOGY_SYSTEM_PROMPT = `You are a research-grade pediatric cardiology echocardiography interpretation assistant at UN Mehta Institute of Cardiology.
+
+Convert a pediatric echo report into the following structured CHD ontology.
+Return ONLY valid JSON. No explanation. No markdown fences.
+
+{
+  "segmental_analysis": {
+    "situs": null,
+    "cardiac_position": null,
+    "atrial_arrangement": null,
+    "av_connection": null,
+    "av_valve_morphology": null,
+    "ventricular_loop": null,
+    "ventricular_topology": null,
+    "va_connection": null,
+    "great_artery_relation": null
+  },
+
+  "systemic_venous_return": {
+    "svc_drainage": null,
+    "ivc_drainage": null,
+    "lsvc": null,
+    "azygos_continuation": null,
+    "hepatic_veins_drainage": null
+  },
+
+  "pulmonary_venous_return": {
+    "type": null,
+    "drainage_site": null,
+    "obstruction": null,
+    "number_of_pulmonary_veins": null
+  },
+
+  "atrial_septum": {
+    "asd_presence": null,
+    "asd_type": null,
+    "size_mm": null,
+    "shunt": null
+  },
+
+  "ventricular_septum": {
+    "vsd_presence": null,
+    "vsd_type": null,
+    "size_mm": null,
+    "shunt": null,
+    "restriction": null,
+    "multiple_vsd": null
+  },
+
+  "av_valves": {
+    "tricuspid_valve": {
+      "atresia": null,
+      "regurgitation": null,
+      "regurgitation_severity": null,
+      "stenosis": null,
+      "ebstein": null,
+      "ebstein_displacement_mm": null,
+      "atrialized_rv": null,
+      "tr_gradient_mmhg": null
+    },
+    "mitral_valve": {
+      "atresia": null,
+      "regurgitation": null,
+      "regurgitation_severity": null,
+      "stenosis": null,
+      "cleft": null
+    },
+    "common_av_valve": null
+  },
+
+  "ventricles": {
+    "rv_size": null,
+    "lv_size": null,
+    "rv_function": null,
+    "lv_function": null,
+    "overall_function": null,
+    "single_ventricle": null
+  },
+
+  "outflow_tract": {
+    "rvot_obstruction": {
+      "presence": null,
+      "level": null,
+      "severity": null,
+      "gradient_mmhg": null
+    },
+    "lvot_obstruction": {
+      "presence": null,
+      "level": null,
+      "severity": null,
+      "gradient_mmhg": null
+    }
+  },
+
+  "semilunar_valves": {
+    "pulmonary_valve": {
+      "stenosis": null,
+      "stenosis_severity": null,
+      "stenosis_gradient_mmhg": null,
+      "atresia": null,
+      "dysplastic": null,
+      "regurgitation": null
+    },
+    "aortic_valve": {
+      "bicuspid": null,
+      "stenosis": null,
+      "stenosis_severity": null,
+      "regurgitation": null,
+      "regurgitation_severity": null
+    }
+  },
+
+  "great_arteries": {
+    "aorta_override_percent": null,
+    "pulmonary_artery_confluence": null,
+    "branch_pa_size": null,
+    "arch_sidedness": null,
+    "arch_anomaly": null,
+    "coarctation": {
+      "presence": null,
+      "severity": null,
+      "gradient_mmhg": null
+    },
+    "interrupted_aortic_arch": {
+      "presence": null,
+      "type": null
+    }
+  },
+
+  "ductal_structures": {
+    "pda": {
+      "presence": null,
+      "size_mm": null,
+      "shunt": null,
+      "gradient_mmhg": null
+    }
+  },
+
+  "major_lesions": {
+    "tetralogy_of_fallot": null,
+    "dorv": {
+      "presence": null,
+      "vsd_relation": null,
+      "great_artery_relation": null
+    },
+    "tga": {
+      "presence": null,
+      "type": null
+    },
+    "cctga": null,
+    "truncus_arteriosus": {
+      "presence": null,
+      "type": null
+    },
+    "tapvc": {
+      "presence": null,
+      "subtype": null,
+      "drainage_site": null,
+      "obstructed": null
+    },
+    "hlhs": null
+  },
+
+  "hemodynamics": {
+    "pah": {
+      "presence": null,
+      "severity": null,
+      "tr_gradient_mmhg": null
+    },
+    "global_shunt_direction": null,
+    "chamber_dilation": null
+  },
+
+  "surgical_history": {
+    "bdg": null,
+    "fontan": null,
+    "arterial_switch": null,
+    "rastelli": null,
+    "blalock_taussig_shunt": null,
+    "pda_ligation": null,
+    "vsd_closure": null,
+    "asd_closure": null,
+    "notes": null
+  },
+
+  "final_diagnosis": null
+}
+
+EXTRACTION RULES:
+1. Extract ONLY explicitly stated information. Set null for anything not mentioned.
+2. situs: "solitus" | "inversus" | "ambiguous"
+3. cardiac_position: "levocardia" | "dextrocardia" | "mesocardia"
+4. av_connection: "concordant" | "discordant" | "double_inlet" | "absent_connection"
+5. ventricular_loop: "D_loop" | "L_loop"
+6. va_connection: "concordant" | "discordant" | "double_outlet" | "single_outlet"
+7. great_artery_relation: "normal_spiral" | "NRGA" | "side_by_side" | "anterior_aorta" | "D-TGA" | "L-TGA" | "malposed"
+8. pulmonary_venous_return.type: "normal" | "PAPVC" | "TAPVC"
+9. tapvc.subtype: "supracardiac" | "cardiac" | "infracardiac" | "mixed"
+10. shunt direction: "L->R" | "R->L" | "bidirectional"
+11. severity: "mild" | "moderate" | "severe"
+12. function: "normal" | "mildly_reduced" | "moderately_reduced" | "severely_reduced"
+13. SAFETY: If ambiguous or not explicitly stated, set null. Never infer anatomy. A null is always safer than a hallucinated lesion.
+14. Return JSON only.`;
+
+const DIAGRAM_SYSTEM_PROMPT = `You are a medical SVG generator. You must generate the classic PEDIATRIC CARDIOLOGY SCHEMATIC BOX DIAGRAM — the standard textbook style with rectangular chambers, venous connections, and defect symbols.
+
+CANVAS: svg width=580 height=600, white background.
+
+════════════════════════════════════════════
+STEP 1 — ALWAYS DRAW THE BASE SKELETON
+════════════════════════════════════════════
+Draw these lines/boxes every time (normal anatomy skeleton):
+
+A) OUTER CHAMBER BOX (one rectangle with internal dividers):
+  - Full outer box: x=100 y=60 w=380 h=340 fill=white stroke=black stroke-width=2
+  - Atrial septum (vertical): line x1=290 y1=60 x2=290 y2=230
+  - AV groove (horizontal): line x1=100 y1=230 x2=480 y2=230
+  - Ventricular septum (vertical): line x1=290 y1=230 x2=290 y2=400
+
+B) VENOUS INPUTS:
+  - SVC: line x1=210 y1=60 x2=210 y2=30, label "SVC" at x=210 y=22 text-anchor=middle font-size=13
+  - IVC: line x1=100 y1=185 x2=70 y2=185, label "IVC" at x=58 y=189 text-anchor=end font-size=13
+  - PVs: two lines at x=370,y=60 and x=420,y=60 going up to y=30, label "PVs" at x=395 y=22 text-anchor=middle font-size=13
+
+C) OUTLET BOXES (PA and Ao below main box):
+  - PA box: rect x=140 y=400 w=90 h=55 fill=white stroke=black stroke-width=2
+  - Ao box: rect x=350 y=400 w=90 h=55 fill=white stroke=black stroke-width=2
+  - Label "PA" at x=185 y=472 text-anchor=middle font-size=14 font-weight=bold
+  - Label "Ao" at x=395 y=472 text-anchor=middle font-size=14 font-weight=bold
+
+D) CHAMBER LABELS (always):
+  - "RA" at x=180 y=155 font-size=24 font-weight=bold text-anchor=middle
+  - "LA" at x=390 y=155 font-size=24 font-weight=bold text-anchor=middle
+  - "RV" at x=180 y=320 font-size=24 font-weight=bold text-anchor=middle
+  - "LV" at x=390 y=320 font-size=24 font-weight=bold text-anchor=middle
+
+════════════════════════════════════════════
+STEP 2 — UNIVERSAL ARROW SYSTEM (mandatory for all shunts and regurgitation)
+════════════════════════════════════════════
+
+ALWAYS define this ONE marker inside <defs> — only used for horizontal shunt arrows:
+  <defs>
+    <marker id="arr" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="darkred"/>
+    </marker>
+  </defs>
+
+IMPORTANT — DO NOT use marker-end for vertical arrows. Instead draw an explicit upward arrowhead triangle for every vertical arrow line. See the exact pattern in the Ebstein TR section below.
+
+ARROW COUNT RULES — apply universally to EVERY shunt and EVERY regurgitation:
+
+  SHUNT SIZE:
+    small / restrictive / tiny        → 1 arrow
+    moderate / medium                  → 2 parallel arrows (8px apart)
+    large / non-restrictive / free     → 3 parallel arrows (8px apart)
+    size not specified                 → 1 arrow (default)
+
+  REGURGITATION SEVERITY:
+    mild                               → 1 arrow
+    moderate                           → 2 parallel arrows (8px apart)
+    severe                             → 3 parallel arrows (8px apart)
+    severity not specified             → 1 arrow (default)
+
+HOW TO DRAW N PARALLEL ARROWS:
+  Horizontal shunt arrows (pointing left or right): stack vertically, 8px between lines.
+    N=1: one line at y_center
+    N=2: lines at y_center-4, y_center+4
+    N=3: lines at y_center-8, y_center, y_center+8
+  Vertical regurgitation arrows (pointing up or down): stack horizontally, 8px between lines.
+    N=1: one line at x_center
+    N=2: lines at x_center-4, x_center+4
+    N=3: lines at x_center-8, x_center, x_center+8
+
+SHUNT DIRECTION:
+  L→R = arrow points LEFT ← (LA/LV are on RIGHT of diagram, RA/RV on LEFT)
+  R→L = arrow points RIGHT →
+  Bidirectional = draw both sets (offset them so they don't overlap)
+
+════════════════════════════════════════════
+ASD SHUNT:
+  - Gap in atrial septum: rect x=285 y=128 w=10 h=64 fill=white stroke=none
+  - Arrow count: large ASD → 3, moderate → 2, small/PFO → 1
+  - L→R (N arrows pointing ←): x1=330 → x2=255, centered at y=157, spacing 8px, marker-end="url(#arr)"
+  - R→L (N arrows pointing →): x1=250 → x2=325, same y positions, marker-end="url(#arr)"
+  - Bidirectional: L→R at y=150,158; R→L at y=166,174 (or single at y=150 / y=165)
+  - Label: "ASD" text at x=480 y=152 font-size=11 fill=darkred text-anchor=end
+
+VSD SHUNT:
+  - Gap in ventricular septum: rect x=285 y=268 w=10 h=72 fill=white stroke=none
+  - Arrow count: large VSD → 3, moderate → 2, small → 1
+  - L→R (N arrows pointing ←): x1=345 → x2=265, centered at y=305, spacing 8px, marker-end="url(#arr)"
+  - R→L (N arrows pointing →): x1=260 → x2=340, centered at y=305, spacing 8px
+  - Bidirectional: L→R centered at y=295, R→L centered at y=318
+  - Label: "VSD" at x=480 y=298 font-size=11 fill=darkred text-anchor=end
+
+════════════════════════════════════════════
+STEP 3 — VALVE REGURGITATION RENDERING
+════════════════════════════════════════════
+Regurgitation arrows flow BACKWARD through the valve (against normal direction).
+Use arr_up (↑) for regurgitation into atria, arr_dn (↓) for regurgitation into ventricles.
+
+INLINE ARROWHEAD PATTERN — use this for ALL vertical regurgitation arrows:
+  For an UPWARD arrow at x=X, from y_bottom to y_top:
+    Step 1 — draw the shaft:   <line x1="X" y1="y_bottom" x2="X" y2="y_top+10" stroke="darkred" stroke-width="2"/>
+    Step 2 — draw the head:    <polygon points="X-5,y_top+10  X+5,y_top+10  X,y_top" fill="darkred"/>
+  The triangle points UP because the tip vertex is at (X, y_top) and base at y_top+10.
+
+  For a DOWNWARD arrow at x=X, from y_top to y_bottom:
+    Step 1 — shaft:  <line x1="X" y1="y_top" x2="X" y2="y_bottom-10" stroke="darkred" stroke-width="2"/>
+    Step 2 — head:   <polygon points="X-5,y_bottom-10  X+5,y_bottom-10  X,y_bottom" fill="darkred"/>
+
+TRICUSPID REGURGITATION (TR) — RV → RA (upward arrows):
+  Shaft runs from y=258 up to y=198, arrowhead tip at y=190.
+  mild TR (N=1) — 1 arrow at x=157:
+    <line x1="157" y1="258" x2="157" y2="198" stroke="darkred" stroke-width="2.5"/>
+    <polygon points="150,198 164,198 157,190" fill="darkred"/>
+
+  moderate TR (N=2) — 2 arrows at x=150, x=165:
+    <line x1="150" y1="258" x2="150" y2="198" stroke="darkred" stroke-width="2.5"/>
+    <polygon points="143,198 157,198 150,190" fill="darkred"/>
+    <line x1="165" y1="258" x2="165" y2="198" stroke="darkred" stroke-width="2.5"/>
+    <polygon points="158,198 172,198 165,190" fill="darkred"/>
+
+  severe TR (N=3) — 3 arrows at x=143, x=157, x=171:
+    <line x1="143" y1="258" x2="143" y2="198" stroke="darkred" stroke-width="2.5"/>
+    <polygon points="136,198 150,198 143,190" fill="darkred"/>
+    <line x1="157" y1="258" x2="157" y2="198" stroke="darkred" stroke-width="2.5"/>
+    <polygon points="150,198 164,198 157,190" fill="darkred"/>
+    <line x1="171" y1="258" x2="171" y2="198" stroke="darkred" stroke-width="2.5"/>
+    <polygon points="164,198 178,198 171,190" fill="darkred"/>
+
+  Label "TR" + severity at x=102 y=183 font-size=11 font-weight=bold fill=darkred
+
+MITRAL REGURGITATION (MR) — LV → LA (upward arrows):
+  Shaft y=258 to y=198, tip at y=190. x positions: mild=380, moderate=372+388, severe=364+380+396
+  mild MR (N=1):
+    <line x1="380" y1="258" x2="380" y2="198" stroke="darkred" stroke-width="2"/>
+    <polygon points="373,198 387,198 380,190" fill="darkred"/>
+  moderate MR (N=2):
+    <line x1="372" y1="258" x2="372" y2="198" stroke="darkred" stroke-width="2"/>
+    <polygon points="365,198 379,198 372,190" fill="darkred"/>
+    <line x1="388" y1="258" x2="388" y2="198" stroke="darkred" stroke-width="2"/>
+    <polygon points="381,198 395,198 388,190" fill="darkred"/>
+  severe MR (N=3):
+    <line x1="364" y1="258" x2="364" y2="198" stroke="darkred" stroke-width="2"/>
+    <polygon points="357,198 371,198 364,190" fill="darkred"/>
+    <line x1="380" y1="258" x2="380" y2="198" stroke="darkred" stroke-width="2"/>
+    <polygon points="373,198 387,198 380,190" fill="darkred"/>
+    <line x1="396" y1="258" x2="396" y2="198" stroke="darkred" stroke-width="2"/>
+    <polygon points="389,198 403,198 396,190" fill="darkred"/>
+  Label "MR" + severity at x=478 y=183 font-size=11 font-weight=bold fill=darkred text-anchor=end
+
+AORTIC REGURGITATION (AR) — Ao → LV (upward into LV, from Ao junction):
+  Shaft y=420 up to y=368, tip at y=360. x: mild=380, moderate=372+388, severe=364+380+396
+  mild AR (N=1):
+    <line x1="380" y1="420" x2="380" y2="368" stroke="darkred" stroke-width="2"/>
+    <polygon points="373,368 387,368 380,360" fill="darkred"/>
+  moderate AR (N=2):
+    <line x1="372" y1="420" x2="372" y2="368" stroke="darkred" stroke-width="2"/>
+    <polygon points="365,368 379,368 372,360" fill="darkred"/>
+    <line x1="388" y1="420" x2="388" y2="368" stroke="darkred" stroke-width="2"/>
+    <polygon points="381,368 395,368 388,360" fill="darkred"/>
+  severe AR (N=3):
+    <line x1="364" y1="420" x2="364" y2="368" stroke="darkred" stroke-width="2"/>
+    <polygon points="357,368 371,368 364,360" fill="darkred"/>
+    <line x1="380" y1="420" x2="380" y2="368" stroke="darkred" stroke-width="2"/>
+    <polygon points="373,368 387,368 380,360" fill="darkred"/>
+    <line x1="396" y1="420" x2="396" y2="368" stroke="darkred" stroke-width="2"/>
+    <polygon points="389,368 403,368 396,360" fill="darkred"/>
+  Label "AR" + severity at x=478 y=355 font-size=11 font-weight=bold fill=darkred text-anchor=end
+
+PULMONARY REGURGITATION (PR) — PA → RV (upward into RV from PA junction):
+  Shaft y=420 up to y=368, tip at y=360. x: mild=170, moderate=162+178, severe=154+170+186
+  mild PR (N=1):
+    <line x1="170" y1="420" x2="170" y2="368" stroke="darkred" stroke-width="2"/>
+    <polygon points="163,368 177,368 170,360" fill="darkred"/>
+  moderate PR (N=2):
+    <line x1="162" y1="420" x2="162" y2="368" stroke="darkred" stroke-width="2"/>
+    <polygon points="155,368 169,368 162,360" fill="darkred"/>
+    <line x1="178" y1="420" x2="178" y2="368" stroke="darkred" stroke-width="2"/>
+    <polygon points="171,368 185,368 178,360" fill="darkred"/>
+  severe PR (N=3):
+    <line x1="154" y1="420" x2="154" y2="368" stroke="darkred" stroke-width="2"/>
+    <polygon points="147,368 161,368 154,360" fill="darkred"/>
+    <line x1="170" y1="420" x2="170" y2="368" stroke="darkred" stroke-width="2"/>
+    <polygon points="163,368 177,368 170,360" fill="darkred"/>
+    <line x1="186" y1="420" x2="186" y2="368" stroke="darkred" stroke-width="2"/>
+    <polygon points="179,368 193,368 186,360" fill="darkred"/>
+  Label "PR" + severity at x=102 y=355 font-size=11 font-weight=bold fill=darkred
+
+════════════════════════════════════════════
+STEP 4 — SPECIFIC LESION RENDERING
+════════════════════════════════════════════
+
+PS / RVOT OBSTRUCTION:
+  - Circle at RV-PA junction: circle cx=185 cy=402 r=10 fill=white stroke=black stroke-width=2
+  - Severe: r=13
+  - Label "PS" or "RVOTO" at x=100 y=398 font-size=10
+
+PULMONARY ATRESIA:
+  - Red X at RV-PA junction: lines (175,392)→(195,412) and (195,392)→(175,412) stroke=red stroke-width=3
+  - Label "PA atresia" at x=100 y=390 font-size=10 fill=red
+  - If PDA present: show PDA (see below) as main PA source
+
+PDA:
+  - Horizontal connector between PA box and Ao box: rect x=230 y=396 w=120 h=8 fill=white stroke=black stroke-width=2
+  - Apply arrow count based on PDA size (small→1, moderate→2, large→3)
+  - L→R (Ao→PA, N arrows pointing ←): centered at y=424, from x1=340 to x2=232
+  - R→L (N arrows pointing →): same y positions
+  - Label "PDA" at x=285 y=444 text-anchor=middle font-size=12 font-style=italic fill=darkred
+
+COARCTATION OF AORTA:
+  - Hourglass narrowing on Ao box: paths M375,430 L385,445 L375,455 and M415,430 L405,445 L415,455 stroke=black stroke-width=2 fill=none
+  - Label "CoA" at x=394 y=460 font-size=11 fill=red text-anchor=middle
+
+INTERRUPTED AORTIC ARCH (IAA):
+  - Ao box with white gap rect x=375 y=398 w=30 h=8 fill=white stroke=none
+  - Red ✕ text at x=390 y=408 fill=red font-size=14 font-weight=bold
+  - Label "IAA" at x=395 y=492 font-size=11 fill=red text-anchor=middle
+  - Always render PDA as source of descending aortic flow
+
+DORV:
+  - Both Ao and PA arise from RV (left of diagram)
+  - PA box at x=130, Ao box shifted to x=250
+  - Label "DORV" at x=195 y=492 font-size=12 fill=navy text-anchor=middle
+
+TRUNCUS ARTERIOSUS:
+  - Single wide outlet box: rect x=200 y=400 w=180 h=55 fill=white stroke=black stroke-width=2
+  - Label "Truncus" at x=290 y=435 text-anchor=middle font-size=12 font-weight=bold
+  - VSD always present
+
+TAPVC:
+  - Supracardiac: PV lines curve to SVC via dashed arc, PVs do NOT enter LA
+  - Cardiac (coronary sinus): PV lines curve to RA area
+  - LA top border shown as dashed (no PV input)
+  - Mandatory ASD with R→L arrows (use arrow count for ASD size)
+  - Label "TAPVC" at x=475 y=78 font-size=12 fill=navy text-anchor=end
+
+AORTIC OVERRIDE (TOF):
+  - Ao box shifted to straddle septum: rect x=245 y=400 w=100 h=55
+  - VSD always present with bidirectional arrows
+
+EBSTEIN ANOMALY — DETAILED RENDERING:
+  Normal anatomy first: draw the standard base skeleton (Step 1).
+  Then apply these modifications:
+
+  A) ATRIALIZED RV ZONE:
+    - Erase the left AV groove (overwrite with white): rect x=100 y=228 w=190 h=6 fill=white stroke=none
+    - Redraw the DISPLACED tricuspid annulus lower at y=285:
+        line x1=100 y1=285 x2=290 y2=285 stroke=black stroke-width=2
+    - Fill atrialized RV zone with pale rose: rect x=101 y=231 w=188 h=53 fill="#ffe8e8" stroke=none
+    - Draw diagonal hatching over it (5 lines, 45°):
+        <line x1="110" y1="231" x2="150" y2="271" stroke="#ffaaaa" stroke-width="1"/>
+        <line x1="130" y1="231" x2="175" y2="276" stroke="#ffaaaa" stroke-width="1"/>
+        <line x1="150" y1="231" x2="195" y2="276" stroke="#ffaaaa" stroke-width="1"/>
+        <line x1="170" y1="231" x2="215" y2="276" stroke="#ffaaaa" stroke-width="1"/>
+        <line x1="190" y1="231" x2="230" y2="271" stroke="#ffaaaa" stroke-width="1"/>
+    - Label "Atr.RV" at x=155 y=262 font-size=10 fill=darkred font-style=italic
+
+  B) DISPLACED TV CHEVRON:
+    - Downward triangle at displaced annulus:
+        <polygon points="170,278 190,278 180,293" fill="darkred" opacity="0.85"/>
+    - Label "Ebstein" at x=102 y=228 font-size=11 font-weight=bold fill=darkred
+
+  C) TRICUSPID REGURGITATION — THE CRITICAL VISUAL:
+    TR arrows flow UPWARD from the displaced annulus y=285 all the way into RA near y=178.
+    DO NOT use marker-end. Instead draw SHAFT + TRIANGLE TIP for each arrow.
+    The triangle tip always points UP: tip vertex is the HIGHEST point (smallest y).
+    Apply arrow count from TR severity (from ontology: av_valves.tricuspid_valve.regurgitation_severity).
+
+    mild TR (N=1) — 1 shaft + 1 triangle:
+      <line x1="157" y1="283" x2="157" y2="188" stroke="darkred" stroke-width="2.5"/>
+      <polygon points="150,188 164,188 157,178" fill="darkred"/>
+
+    moderate TR (N=2) — 2 shafts + 2 triangles:
+      <line x1="150" y1="283" x2="150" y2="188" stroke="darkred" stroke-width="2.5"/>
+      <polygon points="143,188 157,188 150,178" fill="darkred"/>
+      <line x1="165" y1="283" x2="165" y2="188" stroke="darkred" stroke-width="2.5"/>
+      <polygon points="158,188 172,188 165,178" fill="darkred"/>
+
+    severe TR (N=3) — 3 shafts + 3 triangles — COPY EXACTLY:
+      <line x1="143" y1="283" x2="143" y2="188" stroke="darkred" stroke-width="2.5"/>
+      <polygon points="136,188 150,188 143,178" fill="darkred"/>
+      <line x1="157" y1="283" x2="157" y2="188" stroke="darkred" stroke-width="2.5"/>
+      <polygon points="150,188 164,188 157,178" fill="darkred"/>
+      <line x1="171" y1="283" x2="171" y2="188" stroke="darkred" stroke-width="2.5"/>
+      <polygon points="164,188 178,188 171,178" fill="darkred"/>
+
+    VERIFY: each polygon's third point (X, 178) must have SMALLER y than the first two (y=188).
+    The tip at y=178 is ABOVE the base at y=188 — that is what makes it point UP.
+
+    Label "Severe TR" (or Mild/Moderate TR) at x=102 y=172 font-size=12 font-weight=bold fill=darkred
+
+  D) ASD in Ebstein (if present):
+    - Draw ASD per standard rules — R→L shunt typical (N arrows pointing →)
+    - RA and RV are typically dilated — add "(D)" to both labels
+
+PAH:
+  - Bold red "PAH↑" text at x=165 y=492 font-size=13 fill=red font-weight=bold
+
+DILATED CHAMBERS:
+  - Add "(D)" immediately after chamber label, font-size=14 fill=darkred
+
+PRIOR SURGERY:
+  - Glenn: dashed navy line from SVC (x=210,y=30) down to PA box top (x=185,y=400), bypassing RA
+  - Label "Glenn" along the line
+
+════════════════════════════════════════════
+STEP 5 — TITLE
+════════════════════════════════════════════
+  Diagnosis title: text x=290 y=18 text-anchor=middle font-size=13 font-weight=bold fill=navy
+
+════════════════════════════════════════════
+CRITICAL OUTPUT RULES
+════════════════════════════════════════════
+- Always draw base skeleton (Step 1) first
+- Always define <defs> with arr, arr_up, arr_dn markers
+- Never omit RA, RV, LA, LV labels
+- Arrow count is MANDATORY — never draw a single arrow for a large shunt or severe regurgitation
+- Only render lesions with non-null values in the ontology
+- Return ONLY valid SVG starting with <svg width="580" height="600"> ending with </svg>. No markdown.`;
+
+
+const COUNSELING_SYSTEM_PROMPT = `You are a compassionate pediatric cardiology counselor at UN Mehta Institute of Cardiology, Ahmedabad. A child has been diagnosed with congenital heart disease. You must explain the diagnosis to the family in BOTH simple Hindi and simple Gujarati.
+
+The family has primary school education only. They do not know medical words.
+
+Write TWO versions — first Hindi, then Gujarati — using everyday words a farmer or shopkeeper would understand.
+
+OUTPUT FORMAT — follow this EXACTLY, including the --- separators:
+
+---
+[HINDI]
+
+🫀 बच्चे के दिल में क्या हुआ है? / 🫀 બાળકના હ્રદયમાં શું થયું છે?
+[2–3 sentences. Use an analogy. Example: "दिल में एक छोटा सा छेद है जैसे दीवार में दरार।" Do NOT use any medical terms. Say what part is different and what problem it causes for the child's body.]
+
+🏠 घर पर क्या देखेंगे? / 🏠 ઘરમાં શું જોવા મળશે?
+[3–4 simple observations the family will notice: feeding difficulty, sweating, fast breathing, blue lips, slow weight gain, tiring quickly, squatting. Only mention what is relevant to THIS diagnosis.]
+
+🚨 तुरंत अस्पताल कब आएं? / 🚨 તરત હોસ્પિટલ ક્યારે આવવું?
+[Exactly 2 warning signs specific to this diagnosis. Write as simple commands: "अगर बच्चे के होंठ नीले पड़ जाएं तो तुरंत आएं।" Make it feel urgent but not terrifying.]
+
+🔧 इलाज में क्या होगा?
+[2–4 sentences. Explain the procedure in plain words. Use analogies. Do not promise outcomes. End with: "आपका बच्चा अच्छे हाथों में है।"]
+---
+[GUJARATI]
+
+🫀 બાળકના હ્રદયમાં શું થયું છે?
+[2–3 sentences with analogy. No medical terms.]
+
+🏠 ઘરમાં શું જોવા મળશે?
+[3–4 observations relevant to this diagnosis.]
+
+🚨 તરત હોસ્પિટલ ક્યારે આવવું?
+[Exactly 2 warning signs as simple commands.]
+
+🔧 સારવારમાં શું થશે?
+[2–4 sentences. Plain words. Analogies. End with: "તમારું બાળક સારા હાથોમાં છે।"]
+---
+
+RULES:
+- Use EXACTLY the separator format above: --- on its own line, then [HINDI], content, ---, then [GUJARATI], content, ---
+- Do NOT use # or ## markdown headers anywhere. Use only the emoji-prefixed headings shown above.
+- Zero medical jargon. If you must name a procedure, immediately explain it in one plain sentence.
+- Do not use the words: catheter, stenosis, atresia, septum, ventricle, artery, valvuloplasty, shunt. Use plain substitutes.
+- Write Hindi in Devanagari script. Write Gujarati in Gujarati script.
+- Keep each section short — families cannot process long text in a stressful moment.
+- Tone: warm, calm, reassuring. Like a trusted family doctor explaining face-to-face.
+- Do NOT invent findings not present in the echo report. Base explanation only on the given diagnosis and findings.`;
+
+// ═══════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════
+// MANAGEMENT SYSTEM PROMPT
+// ═══════════════════════════════════════════════════════════════
+const MANAGEMENT_SYSTEM_PROMPT = `You are an expert pediatric cardiologist at UN Mehta Institute of Cardiology & Research Centre, Ahmedabad. You provide structured, evidence-based management plans for congenital heart disease based on the echo report, patient age, and SpO2.
+
+Your management plan must be based on:
+- Indian CHD guidelines (Saxena et al., Annals of Pediatric Cardiology, 2019)
+- Echo findings as described
+- Age and SpO2 provided
+- UN Mehta institutional practice
+
+OUTPUT FORMAT — use EXACTLY this structure with these emoji section headers:
+
+🔴 URGENCY
+[One line: Emergent / Urgent (days) / Semi-urgent (weeks) / Elective — with brief reason]
+
+🏥 RECOMMENDED INTERVENTION
+[Primary recommendation: Surgery / Device closure / Balloon valvuloplasty / Medical / Staged palliation / Follow-up only]
+[Specific procedure name if applicable — e.g. ICR, ASO, BDGS, Fontan, BT Shunt, BPV, RVOT stenting, PDA stenting, Device ASD closure]
+
+⚖️ DECISION BASIS
+[3–5 concise bullet points explaining why this management is recommended — based on age, SpO2, echo findings, size, severity, anatomy]
+
+💊 MEDICAL MANAGEMENT
+[Medications if indicated: diuretics, digoxin, sildenafil, propranolol, prostaglandin etc. with indication. Write "None indicated" if not required]
+
+⚠️ PRE-INTERVENTION PRECAUTIONS
+[2–3 specific precautions relevant to this diagnosis and patient — e.g. avoid dehydration in cyanotic CHD, subacute bacterial endocarditis prophylaxis, avoid NSAIDs in PDA-dependent circulation]
+
+📅 FOLLOW-UP PLAN
+[If intervention deferred: specify interval, what to monitor, trigger for escalation]
+[If intervention planned: pre-op workup required]
+
+🔄 ALTERNATIVE OPTIONS
+[Brief note on alternative if primary plan is not feasible — e.g. if BT shunt fails, if family declines surgery, if PAH too severe for repair]
+
+IMPORTANT RULES:
+1. TOF → ICR (intracardiac repair) is the primary and preferred intervention. Age for ICR: ideally 6-18 months, weight >5kg preferred. If weight <4kg OR hypoplastic PAs (McGoon ratio <1.5 or Nakata index <150): palliative RVOT stenting first to promote PA growth → reassess for ICR at 6-12 months. BT shunt only as last resort if PAs too small/discontinuous for stenting. SpO2 <70% or severe hypercyanotic spells → urgent palliation regardless of age.
+2. TGA with intact IVS → Arterial Switch Operation (ASO). URGENT — ideally within first 2 weeks of life before LV regresses. If age 2-4 weeks: urgent ASO still possible but assess LV mass. If age >4 weeks with regressed LV (LV:RV mass ratio <0.6, LV posterior wall stress high): LV retraining protocol (PA band + BT shunt) for 1-2 weeks then ASO — only feasible before 12 months. After 12 months with regressed LV: physiologic repair (Senning/Mustard). TGA with large VSD: can wait slightly longer (LV stays primed) — repair at 1-3 months with ICR.
+3. Complete AVSD → Primary repair if age 3–6 months, good weight. Do NOT recommend PA banding unless unbalanced.
+4. TAPVC → Surgical repair. Obstructed TAPVC = emergency. Infracardiac type is always obstructed.
+5. Severe PAH: TR gradient >50mmHg with L→R shunt → likely inoperable. Do NOT recommend closure. Recommend catheter study first.
+6. Severe PAH with bidirectional or R→L shunt → Eisenmenger physiology. Medical management only (sildenafil, bosentan). No closure.
+7. PA atresia with VSD → Complete repair if confluent PAs with good McGoon ratio. Otherwise staged: RVOT stenting → unifocalisation → ICR.
+8. BDGS: candidate if single ventricle physiology, SpO2 75–85%, age 4–6 months, suitable PA anatomy.
+9. Fontan completion: after BDGS if SpO2 acceptable, PA pressures <15mmHg, good ventricular function.
+10. Peripheral PS → medical management only. No intervention.
+11. Systemic RV (ccTGA, post-Mustard/Senning) → TR gradient reflects systemic pressure, NOT PAH.
+12. SpO2 <75% with any diagnosis → urgency is high regardless of other features.
+13. Weight <2.5kg → defer elective repair. Consider palliation (PDA stenting for duct-dependent lesions, PA band for high flow lesions). Optimize nutrition first. Minimum weight for most open repairs: 3.5-4kg. Exception: obstructed TAPVC = surgical emergency regardless of weight.
+14. ASD device closure: eligible if ≥5mm rim all around, age >2 years, ASD ≤38mm. Surgical if inadequate rims, associated PAPVC, or sinus venosus type.
+15. Complete AVSD → surgical repair at 3-6 months. Do NOT delay beyond 6 months (irreversible PAH risk). PA banding only for weight <3.5kg or severe comorbidity — not routine practice.
+16. Single ventricle staging (tricuspid atresia, HLHS, DORV unroutable, heterotaxy): Stage 1 BT shunt or PA band (depending on anatomy) → Stage 2 BDGS at 4-6 months (SpO2 75-85%) → Stage 3 Fontan at 2-4 years (PA pressure <15mmHg required). Document which stage patient is at.
+15. VSD spontaneous closure: likely if small PM VSD in infant <6 months. Observe.
+
+
+
+Below are verified management decisions from UN Mehta Institute for reference. Study these carefully and apply the same clinical reasoning:
+
+CASE A: Post BPV+PDA stenting TOF. Age 11m, SpO2 80%, Wt 9.1kg. Large conoventricular VSD, Severe infundibular+valvar+supravalvar PS (Gmax 70mmHg), confluent fair-size branch PAs (LPA 5.2mm, RPA 6.9mm), well-flowing PDA stent in situ, moderate-severe TR due to ATL prolapse, normal biventricular function.
+MANAGEMENT: ICR (intracardiac repair) + TV repair. Rationale: Good weight, confluent PAs now of adequate size after PDA stenting palliation, complete repair indicated; TR due to structural cause (ATL prolapse) needs concurrent surgical repair.
+
+CASE B: Multiple VSDs + hypoplastic arch + large PDA + Severe PAH. Age 1m 17d, SpO2 98%, Wt 1.9kg. Multiple muscular VSDs, all 4 chambers dilated, hypoplastic transverse arch (4mm) with no significant gradient, large PDA bidirectional, severe PAH.
+MANAGEMENT: PICU admission → CTaortogram → PA band + Arch repair + PDA ligation. Rationale: Weight 1.9kg too small for primary repair; bidirectional shunt means Eisenmenger physiology developing; arch hypoplasia needs delineation by CTA before surgery; staged approach — PA band controls pulmonary flow, simultaneous arch repair and PDA ligation.
+
+CASE C: Transitional AVCD Rastelli Type-A. Age 4m 19d. Normal great arteries. Large primum ASD + high up secundum ASD + small inlet VSD. Moderate right AVVR, mild left AVVR. Dilated RA-RV. No PAH.
+MANAGEMENT: Medical stabilization. Rationale: No PAH, mild-moderate AV valve regurgitation, adequate time window — plan elective repair at 4-6 months; medical stabilization now with diuretics if heart failure symptoms.
+
+CASE D: Post-BDGS unbalanced AVSD. Age 8y 6m, SpO2 80%, Wt 18.9kg. Well-functioning right BDG. Unbalanced AVSD, aorta from MLV, hypoplastic RV, mild AVVR. Confluent branch PAs (LPA 12.2mm, RPA 11mm). Normal ventricular function. PA gradient 70mmHg (forward flow).
+MANAGEMENT: Pre-Fontan cardiac catheterization followed by Fontan completion. Rationale: Good PA size, well-functioning BDG, adequate weight; PA pressures need catheter assessment before Fontan; if PA pressure acceptable (<15mmHg), proceed to Fontan completion.
+
+CASE E: Truncus Arteriosus type I. Age 6m 18d, SpO2 82%, Wt 3.7kg. Large subtruncal VSD, LA+LV dilated, hyperkinetic PAH, mild truncal valve regurgitation, good biventricular function.
+MANAGEMENT: Medical stabilization followed by truncal repair. Rationale: Hyperkinetic PAH (not obstructive — high flow), weight borderline at 3.7kg; medical stabilization (diuretics, NG feeds, optimize weight) then urgent truncal repair as delay worsens PAH irreversibly; target repair within 2-4 weeks.
+
+CASE F: Ebstein anomaly severe form. Age 2y 2m, SpO2 82%, Wt 9.5kg. Severe Ebstein, plastered leaflets, small functional RV, hugely dilated RA, large atrialized RV, severe TR (RVSP 15mmHg), two small ASDs with R→L shunt, normal LV function, confluent branch PAs (7mm each).
+MANAGEMENT: Ebstein repair + BDGS. Rationale: Severe Ebstein with small functional RV — single ventricle route with BDGS offloads right heart; concomitant TV repair at time of BDGS; R→L shunt at ASD confirms right heart pressure issue; good LV function and good PA size are prerequisites satisfied.
+
+CASE G: Obstructed Supracardiac TAPVC. Age 1m 6d, SpO2 93%. All 4 PVs → common chamber → vertical vein (obstructed between LPA and left bronchus) → innominate → RSVC → RA. Gmax 29mmHg. Severe PAH. RA-RV dilated. Good biventricular function.
+MANAGEMENT: Emergency TAPVC repair. Rationale: Obstruction is a surgical emergency regardless of age or weight — obstructed TAPVC has 100% mortality without surgery; SpO2 93% suggests partial compensation but obstruction will worsen; no delay.
+
+CASE H: TOF near PA atresia + severe LPA origin stenosis. Age 9m 22d. Large conoventricular VSD, near-complete RVOT obstruction (MAP 2mm, PA annulus 3mm), confluent PAs with severe LPA origin stenosis (LPA origin 3mm, hilum 9mm), underfilled LV.
+MANAGEMENT: ICR + LPA plasty. Rationale: Near-atresia morphology but confluent PAs present with adequate distal size; LPA origin stenosis requires simultaneous plasty at time of ICR; do not stage — complete repair with PA reconstruction.
+
+CASE I: PA with Intact IVS + hypoplastic RV + PDA. Age 2d. Pulmonary atresia with intact IVS. Hypertrophied, hypoplastic bipartite RV. Hypoplastic TV (annulus 5mm). Bicuspid aortic valve. Small-moderate PDA with L→R shunt. Confluent PAs (4mm each).
+MANAGEMENT: PGE1 infusion to maintain duct patency, then PDA stenting. Rationale: Duct-dependent pulmonary circulation; PGE1 keeps duct open urgently; PDA stenting preferred over BT shunt for initial palliation as it maintains duct and allows PA growth; hypoplastic RV with TV z-score severely negative — likely single ventricle pathway; reassess for BPV vs single ventricle palliation after PDA stenting.
+
+CASE J: HLHS. Age 1d, SpO2 95%, Wt 2.7kg. Mitral atresia, intact IVS, aortic atresia, hypoplastic arch (ascending 4.5mm), restrictive PFO (mean gradient 6mmHg), moderate PDA with evolving restriction (gradient 28mmHg), bidirectional shunt, duct-dependent systemic circulation, severe PAH.
+MANAGEMENT: CVTS (cardiac surgery) opinion followed by medical management vs Norwood Stage I operation. Rationale: HLHS with restrictive PFO and evolving PDA restriction is a clinical emergency — worsening systemic obstruction; PGE1 urgently to maintain PDA; Norwood Stage I (or hybrid procedure) is definitive; family counselling on prognosis and options required; CVTS multidisciplinary decision.
+
+CASE K: Tricuspid Atresia + Dextrocardia + Transposed great arteries + Hyperkinetic PAH. Age 28d. Situs solitus, dextrocardia. Bilateral SVC, LSVC to coronary sinus. Tricuspid atresia, hypoplastic RV, large ASD R→L, non-restrictive bulboventricular foramen, D-posed great arteries, aorta from right-sided (morphological) ventricle. Hyperkinetic PAH. Good PA size.
+MANAGEMENT: PA banding. Rationale: Tricuspid atresia with transposed GAs and hyperkinetic PAH — high pulmonary flow will cause irreversible PAH; PA banding urgently to protect pulmonary vasculature and prepare for univentricular palliation pathway (BDGS then Fontan); age too young and weight too small for BDGS now.
+
+CASE L: Right Isomerism + Complete AVCD + DORV + PA atresia + PDA. Age 2d. Situs ambiguous (right isomerism), mid liver, common atrium, common AV valve. DORV, PA atresia, LV not routable to aorta. Confluent PAs with RPA origin stenosis (RPA origin 2.5mm). Large PDA from innominate artery (16mm length).
+MANAGEMENT: PDA stenting. Rationale: PA atresia with duct-dependent pulmonary circulation; PDA stenting to maintain pulmonary flow and promote PA growth; right isomerism + unroutable anatomy = single ventricle palliation pathway; PDA stenting preferred over BT shunt given PDA anatomy (from innominate artery, good length); reassess PA growth and consider BDGS at 4-6 months.
+
+
+CASE M: Coronary cameral fistula RCA to RV + Hyperkinetic PAH. Age 5m 17d, SpO2 99%, Wt 5.3kg. Large CCF from RCA to base of RV (entry 3.8mm), dilated RCA, pan-diastolic flow reversal, hyperkinetic PAH, dilated LA & LV, PFO.
+MANAGEMENT: CT coronary angiogram followed by fistula device closure. Rationale: Large coronary fistula causing significant left heart volume overload (dilated LA+LV) and high pulmonary flow (hyperkinetic PAH); CTA required first to delineate fistula anatomy precisely before device closure; catheter-based device closure is first choice for RCA-to-RV fistula of this size.
+
+CASE N: Holmes heart (DILV + NRGA) + Severe MR + Hyperkinetic PAH. Age 14d, SpO2 not stated. DILV, NRGA, large inlet VSD, severe MR due to deficient AML tissue, dysplastic MV, mild PS (25mmHg), hyperkinetic PAH, hypoplastic RV.
+MANAGEMENT: PA banding + Atrial septectomy + Mitral valve obliteration. Rationale: DILV with hyperkinetic PAH — PA banding urgently to protect pulmonary vasculature (single ventricle pathway); severe MR from dysplastic MV causing left heart dilation — MV obliteration (not repair, not replacement in a neonate) removes the regurgitant orifice; atrial septectomy ensures unobstructed mixing; all three done simultaneously.
+
+CASE O: {S,L,D} DILV + near-IAA type B + large PDA. Age 7d. L-looped ventricle, DILV, PA from LV, aorta from outlet chamber, hypoplastic left aortic arch nearly amounting to IAA type B, moderate-large PDA as DTA, large bulbo-ventricular foramen, small ASD.
+MANAGEMENT: CT aortogram then arch repair + PA band. Rationale: Hypoplastic arch amounting to IAA requires CTA to plan arch reconstruction; PA band concurrent with arch repair to control pulmonary flow; PDA will be dealt with at time of arch surgery; single ventricle pathway — BDGS and Fontan later.
+
+CASE P: DOLV + severe PS + bilateral SVC + smallish RV. Age 1d, normal SpO2. DOLV (PA committed to LV, aorta to both), bilateral SVC (LSVC to LA), large sub-aortic VSD, severe valvar+sub-valvar PS, side-by-side GAs (aorta right), smallish but adequate RV, small branch PAs (LPA 2.7mm, RPA 3.5mm).
+MANAGEMENT: Medical stabilization. Rationale: Complex anatomy requiring detailed evaluation; neonatal age — needs weight gain before intervention; smallish branch PAs and severe PS but SpO2 acceptable; plan VSD routing + RVOT reconstruction when older and bigger; immediate surgery not indicated without haemodynamic compromise.
+
+CASE Q: Anatomically corrected malposed GA (ACMGA) + {S,D,L} DORV + multiple VSDs + severe PS. Age 5m 7d, SpO2 99%, Wt 5.5kg. ACMGA, DORV with L-posed aorta, three VSDs (large inlet+subpulmonic, large subaortic, large muscular), severe valvular+subvalvar PS (Gmax 70mmHg), good antegrade PA flow, doming PV, good branch PAs (9mm each), normal biventricular function.
+MANAGEMENT: Follow-up after 2 months, then plan VSD closure + RVOT resection + pulmonary valvotomy. Rationale: SpO2 99% and normal biventricular function — no haemodynamic compromise now; adequate PA size; good antegrade flow means PA growth will continue; elective complete repair planned: VSD closure (routing), RVOT resection, and pulmonary valvotomy at ~8 months age.
+
+CASE R: Large PM VSD with STL restriction (overall small shunt) + severe sub-aortic membrane + AS + parachute MV. Age 1y 9m, SpO2 99%, Wt 8kg. VSD restricted to small overall shunt (Gmax 60mmHg), narrow LVOT from diffuse sub-aortic membrane, severe sub-valvular AS (Pg/Mg 100/50mmHg), tricuspid AV with NCC restricted mobility, mild-moderate AR, parachute MV with single papillary muscle, LSVC to roofed CS.
+MANAGEMENT: LVOT resection + VSD closure +/- Aortic valve repair (surgical). Rationale: Severe LVOT obstruction from sub-aortic membrane is the primary indication — gradient 100mmHg causes progressive LV hypertrophy and AR; VSD closure simultaneous; aortic valve repair/replacement considered if AR progresses intraoperatively; parachute MV requires careful assessment — avoid inadvertently creating MV stenosis.
+
+CASE S: CCTGA {I,D,D} Situs Inversus Dextrocardia + Severe TR systemic AV valve + Regressed MLV. Age 3y 6m, SpO2 98%, Wt 12.4kg. Situs inversus, dextrocardia, Cc-TGA (AV+VA discordance), intact IVS, severe TR from dilated annulus+non-coapting leaflets (VC 5.7mm), regressed MLV (left side = morphological LV, not the systemic ventricle).
+MANAGEMENT: CVTS opinion for PA banding for TR. Rationale: In CCTGA without VSD, systemic RV (morphological RV on left side) is failing → severe TR from annular dilatation; TR gradient reflects systemic pressure NOT PAH; PA banding (LV training) is the strategy to retrain the morphological LV before double-switch operation; regressed MLV confirms urgent need for LV retraining; CVTS/surgical team must assess suitability for double-switch.
+
+CASE T: Situs Solitus Dextrocardia + TASVC (total anomalous systemic venous connection) + TOF + PA + RPA origin stenosis. Age 8m 26d, SpO2 90%, Wt 6.3kg. Situs solitus dextrocardia, bilateral SVC all draining to left-sided atrium (TASVC), IVC to left atrium, TOF with pulmonary atresia, moderate-severe RPA origin stenosis (origin 2.5mm, hilum 6mm), LPA 11mm, moderate PDA from undersurface of arch, right aortic arch with mirror-image branching.
+MANAGEMENT: CTPA followed by CVTS opinion for systemic venous re-routing + ICR + conduit + RPA plasty. Rationale: Complex anatomy — TASVC means all systemic veins go to wrong atrium; CTA/CTPA needed to map venous anatomy; surgical plan involves rerouting systemic veins + complete intracardiac repair of TOF + RV-PA conduit + RPA plasty; this is a major staged or combined operation requiring multidisciplinary planning.
+
+CASE U: {S,L,D} DILV + L-looped + PS (Gmax 64mmHg) + increased Qp + balanced physiology. Age 2y 10m, SpO2 96%, Wt 10.5kg. DILV, L-looped ventricles, PA from MLV, aorta from outlet chamber, large bulbo-ventricular foramen, moderate-severe valvular PS (Gmax 64mmHg), overall increased Qp (confluent dilated branch PAs), normal ventricular function.
+MANAGEMENT: Regular follow-up in view of balanced physiology and overall increased Qp. Rationale: DILV with PS creates a natural balance — PS limits pulmonary flow preventing PAH while maintaining adequate saturation; increased Qp but SpO2 96% means good mixing; no urgent intervention; close follow-up to watch for increasing PS (may reduce Qp too much) or worsening PAH; Fontan pathway planned long-term.
+
+CASE V: Cc-TGA + Large Inlet VSD + Supra-tricuspid membrane + moderate-severe TR + moderate PS. Age 1y 7m, SpO2 96%, Wt 8kg. Cc-TGA (AV-VA discordance), L-looped ventricle, L-posed aorta, large inlet VSD with muscular extension, supra-tricuspid membrane (gradient 20/10mmHg), moderate-severe TR (tethered STL, hyperechoic chordae), moderate valvular PS (Gmax 55mmHg — partially flow related), tricuspid aortic+pulmonary valves, normal biventricular function.
+MANAGEMENT: VSD surgical closure + Supra-tricuspid membrane resection + TV repair + Pulmonary valvotomy (physiological repair). Rationale: Cc-TGA with VSD and RVOTO — physiological repair (not anatomical/double-switch) chosen: VSD closure directs LV blood to PA, RV to aorta, accepting systemic RV permanently; supra-tricuspid membrane resection and TV repair address obstructions; PS (55mmHg partially flow-related) managed with valvotomy; good biventricular function makes repair feasible.
+
+CASE W: Unobstructed TAPVC + DORV + Common AV valve + Interrupted IVC + Severe PAH + Smallish LV. Age 3m 7d, SpO2 92%. Unobstructed TAPVC (PVs to LA roof), interrupted IVC (azygos continuation presumed), DORV, common AV valve, LV not routable to aorta, smallish LV, severe PAH, grade II left AVVR + moderate right AVVR.
+MANAGEMENT: Early PA banding, pre-op sedated echo to be done. Rationale: Severe PAH + unobstructed TAPVC — PA band urgently to control pulmonary flow before PAH becomes irreversible; smallish LV and LV-to-aorta not routable = single ventricle pathway; sedated echo needed for better anatomical delineation before definitive surgical plan; TAPVC repair + Kawashima/Fontan staged later.
+
+CASE X: Small PDA (2.5mm) + Mild PAH + Severe LV Dysfunction. Age 6y 3m, SpO2 96%, Wt 8.7kg. Small PDA with L→R shunt (gradient 80/25mmHg), severe LV dysfunction (LVEF 34%, FS 17%), mild PAH (RVSP ~30mmHg), dilated LA & LV, mild MR, trivial TR.
+MANAGEMENT: PDA device closure to reduce volume overload. Rationale: Even a small PDA causes continuous left heart volume overload; severe LV dysfunction (EF 34%) is the critical finding — PDA closure removes the volume load and allows LV recovery; mild PAH is reactive to high flow, not obstructive; device closure preferred over surgical; LV function must be monitored closely post-closure.
+
+CASE Y: Unobstructed supracardiac TAPVC to SVC-RA junction + separate RUPV to mid-SVC. Age 1m 25d, SpO2 91%, Wt 5kg. All left PVs + RLPV → common chamber → SVC-RA junction. RUPV drains separately to mid-SVC. Moderate ASD with R→L shunt. Dilated RA-RV. Mild PAH.
+MANAGEMENT: TAPVC repair. Rationale: Unobstructed TAPVC but SpO2 91% with R→L shunt at ASD — hemodynamically significant; complex drainage pattern (RUPV separate to mid-SVC) requires careful surgical planning; elective but timely repair before PAH progresses; both drainage sites must be addressed at surgery.
+
+CASE Z: TOF with PA + LMCA-to-MPA coronary collateral + smallish LPA. Age 1y 9m, SpO2 75%, Wt 8.7kg. PA-VSD, confluent PAs (RPA 7.5mm, smallish LPA 6mm), moderate coronary collateral from LMCA to MPA, normal biventricular function. No PDA.
+MANAGEMENT: CTPA followed by SANO shunt + coronary collateral ligation. Rationale: PA-VSD with coronary collateral — critical to ligate LMCA-MPA collateral at time of palliation as it causes coronary steal; CTPA maps PA and collateral anatomy; SANO shunt (RV-PA conduit) preferred over BT shunt for PA-VSD to avoid pulmonary overcirculation; once adequate PA growth confirmed, ICR planned.
+
+CASE AA: Outlet VSD closed by RCC prolapse + RSOV to RV + Dilated LA & LV. Age 8y, SpO2 98%, Wt 17.3kg. Outlet VSD effectively closed by significant RCC prolapse (residual small-moderate shunt), small-moderate RSOV (ruptured sinus of Valsalva) to RV (Gmax 84mmHg), dilated LA & LV, trivial AR, mild TR, normal biventricular function, tiny PDA.
+MANAGEMENT: RSOV repair + PDA ligation. Rationale: RSOV (ruptured right sinus of Valsalva) causes left-to-right shunt into RV leading to progressive LA+LV dilation; Gmax 84mmHg confirms large shunt volume; surgical repair of RSOV fistula + VSD closure (if residual) + PDA ligation; do not defer — continued volume overload will impair LV function.
+
+
+
+CASE AB: D-TGA + multiple muscular VSDs + regressed LV + SpO2 66%. Age 5y, SpO2 66%, Wt unknown. D-TGA, VA discordance, D-looped, D-malposed GVs, small-moderate apical + mid muscular VSDs (bidirectional), IVS bowing into LVOT, regressed LV, RA-RV dilated, mild pericardial effusion.
+MANAGEMENT: Urgent surgical consultation for ASO vs Senning. Rationale: SpO2 66% is critically low — immediate intervention needed; D-TGA with regressed LV at age 5y makes ASO high risk (LV may not support systemic circulation); VSDs may provide some mixing but inadequate; decision between ASO (with LV retraining impossible at age 5) vs Senning/Mustard (palliative but safer); CVTS multidisciplinary urgent discussion. Start PGE1 if not already on it.
+
+CASE AC: Large conoventricular VSD + Absent pulmonary valve + Free PR + Absent LPA + Severe RPA origin stenosis. Age 19y 11m. Large CVT VSD, absent PV, free PR, MPA continues as RPA (unilateral), absent LPA, severe RPA origin stenosis (Gmax 90mmHg, origin 6mm), RA-RV dilated, normal biventricular function.
+MANAGEMENT: VSD closure + PVR (pulmonary valve replacement) + RPA plasty (single lung circulation). Rationale: Absent pulmonary valve syndrome with absent LPA — essentially single-lung pulmonary circulation through RPA; free PR with only one PA causes progressive RV dilation; VSD closure + PVR (tissue valve) + RPA origin plasty to relieve severe stenosis; absent LPA is permanent — must inform patient of single-lung status; surgical team to plan carefully given unusual anatomy.
+
+CASE AD: Structurally Normal Heart + Extra Hepatic CPSS. Age 7y 6m, SpO2 86%, Wt 20.8kg. Normal cardiac anatomy except mild LV dilatation, PFO. Extra-hepatic congenital portosystemic shunt (CPSS) from left renal vein to portal vein.
+MANAGEMENT: High risk CPSS device closure trial. Rationale: CPSS causes portosystemic shunting → hyperammonemia, hepatic encephalopathy risk, pulmonary hypertension risk (liver bypassed); device closure of the shunt is treatment; "high risk" reflects risk of hepatic decompensation if portal pressure rises acutely after closure — test occlusion first; echo shows structurally normal heart so cardiac anatomy not the limiting factor.
+
+CASE AE: Post PDA stenting (PA-IVS / bipartite RV) → BDGS. Age 9m 25d, SpO2 82%. Post PDA stenting (DES 3.5x15mm + 3.5x8mm), bipartite RV, biventricular hypertrophy, TV annulus 8mm (severely hypoplastic), PFO with R→L, confluent PAs (RPA 6mm, LPA 7mm), well-flowing PDA stent, pulsatile aorta.
+MANAGEMENT: BDGS + Atrial septectomy + TAP (tricuspid annuloplasty) + PDA stent removal. Rationale: Post-PDA stenting for PA-IVS; PA growth has been achieved (LPA 7mm, RPA 6mm); now progressing to Stage 2 (BDGS); TV annulus 8mm very small — tricuspid annuloplasty to optimize flow through hypoplastic TV; atrial septectomy to ensure unobstructed mixing; PDA stent removed as BDGS will provide pulmonary flow; single ventricle pathway confirmed by severely hypoplastic TV/RV.
+
+CASE AF: ALCAPA to RPA origin + MV prolapse + Severe MR. Age 12y 1m. ALCAPA (anomalous left coronary artery from PA — specifically to RPA origin, unusual variant). AML + PML prolapse, severe MR (VC 8mm). Dilated IVC+hepatic veins. Dilated RCA, LMCA, LAD. Flow reversal in LAD. Multiple coronary collaterals. Normal LV function (LVEF 70%), dilated LA+LV.
+MANAGEMENT: ALCAPA repair + MVR (mitral valve replacement). Rationale: ALCAPA — left coronary arises from PA instead of aorta — causes chronic ischemia (myocardium perfused by low-pressure, deoxygenated blood); coronary collaterals have compensated so far (hence preserved LVEF); surgical reimplantation of ALCAPA to aorta is definitive repair; severe MR with dilated LA+LV and prolapsing valve needs MVR (at this age and MR severity, repair unlikely to be durable) concurrent with ALCAPA repair.
+
+CASE AG: CCTGA situs solitus dextrocardia + large inlet VSD + severe TR + LVOTO from accessory TV membrane. Age 40y 4m, SpO2 96%. CC-TGA (situs solitus, dextrocardia, AV-VA discordance, L-looped, L-posed aorta), large inlet VSD bidirectional, severe systemic-sided TR (left-sided TV, TR VC large), accessory membrane on TV protruding into LVOT (moderate-severe LVOTO, Gmax 62mmHg), RV (systemic ventricle) dysfunction, dilated hepatic veins.
+MANAGEMENT: CVTS opinion for high risk Senning + TV repair + MV repair + VSD closure + accessory TV tissue resection vs medical management. Rationale: Adult CCTGA (40y) with severe systemic AV valve regurgitation + LVOTO — complex anatomy with systemic RV failure; Senning (atrial switch) in this context restores systemic LV as pumping chamber; TV repair to address severe TR; accessory membrane resection relieves LVOTO; VSD closure; however at age 40 with established RV dysfunction, surgery is very high risk — CVTS multidisciplinary discussion vs optimal medical management with HF therapy.
+
+CASE AH: DORV + borderline LV routability + severe subvalvar PS + VSD enlargement needed. Age 10m 5d, SpO2 81%, Wt 7.7kg. DORV, moderate-large posterior muscular VSD with subaortic extension (bidirectional), LV to aorta borderline routable (will need VSD enlargement), severe subvalvar PS (Gmax 64mmHg), posterior deviation of conal septum, adequate RV cavity, good branch PAs.
+MANAGEMENT: IVTR (VSD closure/rerouting) + conal septum resection vs BDGS + MPA ligation. Rationale: DORV with borderline LV routability — debate between biventricular repair (IVTR requiring VSD enlargement + conal septum resection) and univentricular palliation (BDGS); key factor is whether VSD enlargement risks AV node; good PS gradient (64mmHg) means adequate PS to balance circulation post-BDGS; if IVTR chosen, must enlarge VSD anterosuperiorly and resect deviated conal septum; surgical team decision based on intraoperative assessment.
+
+CASE AI: DOLV + severe PS + PDA + neonatal. Age 25d, SpO2 80%, Wt 3.2kg. DOLV, side-by-side GAs, moderate subaortic VSD bidirectional, severe subvalvar+valvar PS (predominantly valvar, Gmax 55mmHg), confluent good PAs, small-moderate PDA with L→R shunt, normal biventricular function.
+MANAGEMENT: Medical stabilization, PDA stenting SOS (if required). Rationale: DOLV with severe PS and PDA — PDA provides some augmented pulmonary flow; SpO2 80% but stable; weight 3.2kg too small for surgical repair; medical stabilization with close monitoring; if SpO2 drops or PDA narrows, PDA stenting to maintain pulmonary flow as bridge; plan surgical VSD closure + RVOT reconstruction when weight ≥5kg.
+
+CASE AJ: Large malaligned PM VSD + conal septum RVOTO + SAM + right aortic arch with aberrant LSCA. Age 7y 6m, SpO2 99%, Wt 17.6kg. Large malaligned PM VSD (L→R), dilated LA+LV, prominent conal septum causing moderate subvalvar RVOTO (Gmax 48mmHg), small non-obstructive SAM from malaligned IVS crest, right aortic arch with aberrant LSCA.
+MANAGEMENT: VSD surgical closure + conal septum resection + SAM resection + PDA raphe resection if present. Rationale: Malaligned VSD with RVOTO — conal septum resection and VSD closure together prevent residual RVOTO post-repair; SAM from malaligned IVS crest will resolve with VSD closure (SAM non-obstructive now but may worsen with patch); right aortic arch with aberrant LSCA — surgeons must be aware of vascular ring anatomy; PDA raphe resection if identified intraoperatively.
+
+CASE AK: DORV 200% + restrictive posterior muscular VSD + LV not routable + severe PS + bilateral SVC + mild PAH. Age 3m 1d, SpO2 98%, Wt 4.9kg. DORV (200°), bilateral SVC, restrictive posterior muscular VSD with L→R (Gmax 60mmHg), posterior deviation conal septum, LV not routable to Aorta or PA, moderate-severe subvalvar PS (Gmax 60mmHg), mild PAH, good antegrade flow.
+MANAGEMENT: Follow-up 1 month, then plan atrial septectomy + VSD enlargement +/- PA band. Rationale: DORV with LV not routable and restrictive VSD — definitive repair requires VSD enlargement; SpO2 98% and normal biventricular function means no urgency right now; mild PAH with restrictive VSD means PA band not urgently needed; plan: in 1 month, elective atrial septectomy (for mixing) + VSD enlargement to allow VSD-to-aorta tunnel routing; PA band if PAH progresses; bilateral SVC does not affect surgical approach directly.
+
+CASE AL: Large mid muscular VSD + severe juxtaductal CoA + severe PAH. Age 7y 3m, SpO2 88%, Wt 14.5kg. Large mid-muscular VSD with anterior extension (bidirectional), hypoplastic distal arch + isthmus with severe juxtaductal coarctation (gradient 45/18mmHg, pan-diastolic spill, damp DTA), confluent dilated PAs, severe PAH, normal biventricular function.
+MANAGEMENT: CT aortogram followed by further plan. Rationale: VSD + CoA + severe PAH — critical to delineate arch anatomy by CTA before any intervention; CoA with VSD creates complex hemodynamics (CoA increases LV afterload while VSD shunts volume); PAH severity must be assessed (reversible? Eisenmenger?); if PAH reversible: simultaneous CoA repair + VSD closure; if Eisenmenger: no VSD closure, CoA repair only + pulmonary vasodilator therapy; CTA first to map anatomy and plan.
+
+CASE AM: TAPVD + TOF + PA atresia + bilateral PDAs + hypoplastic PAs + right aortic arch with aberrant LSCA. Age 1m 8d, SpO2 80%, Wt 2.9kg. TAPVD (PVs to LA roof), large malaligned ASD with R→L, large CVT VSD with bidirectional shunt, PA atresia, right aortic arch with aberrant LSCA, bilateral PDAs (right from left innominate, left from arch undersurface) supplying ipsilateral hypoplastic branch PAs, RA+RV dilated.
+MANAGEMENT: CTPA followed by further plan. Rationale: Extremely complex anatomy — TAPVD + PA-VSD + bilateral PDAs + right aortic arch + aberrant LSCA; CTA/CTPA mandatory to map: PDA anatomy, branch PA size and confluency, pulmonary venous drainage site exactly, aortic arch branching; management plan will depend on anatomy: if PAs confluent and adequately sized → unifocalization + ICR + TAPVD repair; if PAs discontinuous/tiny → staged unifocalization first; no surgery without CT roadmap.
+
+Respond with ONLY the management plan. No preamble. No "Here is the plan." Just the sections as formatted above.`;
+
+// SEGMENTAL CHD RULE ENGINE  (Van Praagh segmental approach)
+// Updated for research-grade ontology schema
+// ═══════════════════════════════════════════════════════════════
+
+// 1. CHD Knowledge Base
+const CHD_KB = {
+  "TOF": {
+    mandatory: ["ventricular_septum.vsd_presence", "outflow_tract.rvot_obstruction.presence", "great_arteries.aorta_override_percent"],
+    optional:  ["atrial_septum.asd_presence", "ductal_structures.pda.presence"],
+    forbid:    ["semilunar_valves.pulmonary_valve.atresia"],
+    label: "Tetralogy of Fallot"
+  },
+  "PA-VSD": {
+    mandatory: ["ventricular_septum.vsd_presence", "semilunar_valves.pulmonary_valve.atresia"],
+    optional:  ["ductal_structures.pda.presence", "atrial_septum.asd_presence"],
+    forbid:    ["semilunar_valves.pulmonary_valve.stenosis"],
+    label: "Pulmonary Atresia with VSD"
+  },
+  "TGA": {
+    mandatory: [],
+    vaConnection: "discordant",
+    optional:  ["ventricular_septum.vsd_presence", "ductal_structures.pda.presence", "atrial_septum.asd_presence"],
+    forbid:    [],
+    label: "Transposition of Great Arteries"
+  },
+  "TAPVC": {
+    mandatory: ["major_lesions.tapvc.presence", "atrial_septum.asd_presence"],
+    pvReturn:  "TAPVC",
+    optional:  [],
+    forbid:    [],
+    label: "Total Anomalous Pulmonary Venous Connection"
+  },
+  "Tricuspid Atresia": {
+    mandatory: ["atrial_septum.asd_presence"],
+    tvAtresia: true,
+    avForbid:  "concordant",
+    optional:  ["ventricular_septum.vsd_presence", "ductal_structures.pda.presence"],
+    forbid:    [],
+    label: "Tricuspid Atresia"
+  },
+  "DORV": {
+    mandatory: ["ventricular_septum.vsd_presence", "major_lesions.dorv.presence"],
+    optional:  ["outflow_tract.rvot_obstruction.presence", "semilunar_valves.pulmonary_valve.stenosis", "atrial_septum.asd_presence"],
+    forbid:    [],
+    label: "Double Outlet Right Ventricle"
+  },
+  "Truncus Arteriosus": {
+    mandatory: ["ventricular_septum.vsd_presence", "major_lesions.truncus_arteriosus.presence"],
+    optional:  ["ductal_structures.pda.presence", "atrial_septum.asd_presence"],
+    forbid:    ["semilunar_valves.pulmonary_valve.stenosis", "semilunar_valves.pulmonary_valve.atresia"],
+    label: "Truncus Arteriosus"
+  },
+  "IAA": {
+    mandatory: ["great_arteries.interrupted_aortic_arch.presence", "ventricular_septum.vsd_presence", "ductal_structures.pda.presence"],
+    optional:  ["atrial_septum.asd_presence"],
+    forbid:    ["great_arteries.coarctation.presence"],
+    label: "Interrupted Aortic Arch"
+  },
+  "CoA": {
+    mandatory: ["great_arteries.coarctation.presence"],
+    optional:  ["ductal_structures.pda.presence", "ventricular_septum.vsd_presence"],
+    forbid:    ["great_arteries.interrupted_aortic_arch.presence"],
+    label: "Coarctation of Aorta"
+  },
+  "Ebstein": {
+    mandatory: ["av_valves.tricuspid_valve.ebstein"],
+    optional:  ["atrial_septum.asd_presence", "ductal_structures.pda.presence"],
+    forbid:    ["av_valves.tricuspid_valve.atresia"],
+    label: "Ebstein Anomaly of Tricuspid Valve"
+  },
+  "Complete AVSD": {
+    mandatory: ["av_valves.common_av_valve", "atrial_septum.asd_presence", "ventricular_septum.vsd_presence"],
+    optional:  [],
+    forbid:    [],
+    balanced_default: true,
+    note: "Unbalanced only if RV or LV hypoplasia explicitly stated",
+    label: "Complete AVSD"
+  }
+};
+
+// 2. Deep-get helper for dotted paths
+function deepGet(obj, path) {
+  return path.split(".").reduce((cur, k) => (cur == null ? null : cur[k]), obj);
+}
+
+// 3. isPresent — checks both boolean true and object { presence: true }
+function isPresent(val) {
+  if (val === null || val === undefined) return false;
+  if (typeof val === "boolean") return val === true;
+  if (typeof val === "object") return val.presence === true;
+  return false;
+}
+
+// 4. isPresentPath — checks a dotted path
+function isPresentPath(o, path) {
+  const val = deepGet(o, path);
+  return isPresent(val);
+}
+
+// 5. Deep-set helper
+function deepSet(obj, path, value) {
+  const parts = path.split(".");
+  let cur = obj;
+  for (let i = 0; i < parts.length - 1; i++) {
+    if (cur[parts[i]] == null || typeof cur[parts[i]] !== "object") cur[parts[i]] = {};
+    cur = cur[parts[i]];
+  }
+  const last = parts[parts.length - 1];
+  if (typeof cur[last] === "object" && cur[last] !== null) {
+    cur[last].presence = true;
+  } else {
+    cur[last] = true;
+  }
+}
+
+function autoCorrect(corrected, path, reason, corrections) {
+  if (!isPresentPath(corrected, path)) {
+    deepSet(corrected, path, true);
+    corrections.push(`Auto-added: ${path} (${reason})`);
+  }
+}
+
+// 6. Main segmental rule engine
+function runSegmentalRuleEngine(o) {
+  const errors      = [];
+  const warnings    = [];
+  const corrections = [];
+  const corrected   = JSON.parse(JSON.stringify(o));
+
+  const diag = ((o.final_diagnosis || "") + " " + (o.segmental_analysis?.great_artery_relation || "")).toUpperCase();
+
+  // ── Rule 1: Pulmonary atresia and PS cannot coexist ──
+  if (isPresentPath(o, "semilunar_valves.pulmonary_valve.atresia") &&
+      isPresentPath(o, "semilunar_valves.pulmonary_valve.stenosis")) {
+    errors.push("Pulmonary atresia and pulmonary stenosis cannot coexist");
+    deepSet(corrected, "semilunar_valves.pulmonary_valve.stenosis", false);
+    corrections.push("Cleared: pulmonary_valve.stenosis (incompatible with atresia)");
+  }
+
+  // ── Rule 2: TAPVC → pulmonary_venous_return must be TAPVC ──
+  if (isPresentPath(o, "major_lesions.tapvc.presence")) {
+    if (o.pulmonary_venous_return?.type !== "TAPVC") {
+      errors.push("TAPVC present but pulmonary_venous_return.type ≠ 'TAPVC'");
+      if (corrected.pulmonary_venous_return) corrected.pulmonary_venous_return.type = "TAPVC";
+      else corrected.pulmonary_venous_return = { type: "TAPVC" };
+      corrections.push("Auto-set: pulmonary_venous_return.type = TAPVC");
+    }
+    // TAPVC requires ASD
+    if (!o.atrial_septum?.asd_presence) {
+      warnings.push("TAPVC requires ASD/PFO for systemic mixing — not documented");
+      autoCorrect(corrected, "atrial_septum.asd_presence", "obligatory for TAPVC", corrections);
+    }
+  }
+
+  // ── Rule 3: Tricuspid atresia + AV concordance impossible ──
+  if (o.av_valves?.tricuspid_valve?.atresia === true) {
+    if (o.segmental_analysis?.av_connection === "concordant") {
+      errors.push("Tricuspid atresia is anatomically incompatible with AV concordance");
+      corrected.segmental_analysis.av_connection = "absent_connection";
+      corrections.push("Auto-corrected: av_connection → absent_connection (tricuspid atresia)");
+    }
+    if (!o.atrial_septum?.asd_presence) {
+      warnings.push("Tricuspid atresia requires ASD — not documented");
+      autoCorrect(corrected, "atrial_septum.asd_presence", "obligatory for tricuspid atresia", corrections);
+    }
+  }
+
+  // ── Rule 4: TGA requires discordant VA ──
+  if (diag.includes("TGA") || diag.includes("D-TGA") || diag.includes("L-TGA") ||
+      o.major_lesions?.tga?.presence) {
+    const va = o.segmental_analysis?.va_connection;
+    if (va && va !== "discordant") {
+      errors.push("TGA requires discordant VA connection");
+      corrected.segmental_analysis.va_connection = "discordant";
+      corrections.push("Auto-corrected: va_connection → discordant (TGA)");
+    }
+  }
+
+  // ── Rule 5: CCTGA requires L-loop + discordant AV + discordant VA ──
+  if (o.major_lesions?.cctga) {
+    if (o.segmental_analysis?.ventricular_loop !== "L_loop") {
+      warnings.push("CCTGA typically has L-loop ventricles");
+    }
+    if (o.segmental_analysis?.av_connection !== "discordant") {
+      warnings.push("CCTGA requires discordant AV connection");
+    }
+    if (o.segmental_analysis?.va_connection !== "discordant") {
+      warnings.push("CCTGA requires discordant VA connection");
+    }
+  }
+
+  // ── Rule 6: TOF mandatory triad ──
+  if (o.major_lesions?.tetralogy_of_fallot || diag.includes("TOF")) {
+    if (!o.semilunar_valves?.pulmonary_valve?.atresia) { // pure TOF (not PA-VSD)
+      if (!o.ventricular_septum?.vsd_presence) {
+        warnings.push("TOF requires VSD — not documented");
+        autoCorrect(corrected, "ventricular_septum.vsd_presence", "mandatory in TOF", corrections);
+      }
+      if (!o.outflow_tract?.rvot_obstruction?.presence && !o.semilunar_valves?.pulmonary_valve?.stenosis) {
+        warnings.push("TOF requires RVOT obstruction or PS — not documented");
+        autoCorrect(corrected, "outflow_tract.rvot_obstruction.presence", "mandatory in TOF", corrections);
+      }
+      if (!o.great_arteries?.aorta_override_percent) {
+        warnings.push("TOF requires documented aortic override — not quantified");
+      }
+    }
+  }
+
+  // ── Rule 7: DORV requires VSD ──
+  if (isPresentPath(o, "major_lesions.dorv.presence")) {
+    if (!o.ventricular_septum?.vsd_presence) {
+      warnings.push("DORV requires VSD — not documented");
+      autoCorrect(corrected, "ventricular_septum.vsd_presence", "mandatory in DORV", corrections);
+    }
+    if (o.segmental_analysis?.va_connection === "concordant") {
+      errors.push("DORV cannot have fully concordant VA connection");
+      corrected.segmental_analysis.va_connection = "double_outlet";
+      corrections.push("Auto-corrected: va_connection → double_outlet (DORV)");
+    }
+  }
+
+  // ── Rule 8: Truncus Arteriosus ──
+  if (isPresentPath(o, "major_lesions.truncus_arteriosus.presence")) {
+    if (!o.ventricular_septum?.vsd_presence) {
+      warnings.push("Truncus arteriosus requires VSD — not documented");
+      autoCorrect(corrected, "ventricular_septum.vsd_presence", "mandatory in truncus", corrections);
+    }
+    if (isPresentPath(o, "semilunar_valves.pulmonary_valve.stenosis")) {
+      errors.push("Truncus arteriosus cannot have separate pulmonary stenosis (no separate PA exists)");
+      if (corrected.semilunar_valves?.pulmonary_valve) corrected.semilunar_valves.pulmonary_valve.stenosis = false;
+      corrections.push("Cleared: pulmonary_valve.stenosis (incompatible with truncus)");
+    }
+    if (isPresentPath(o, "semilunar_valves.pulmonary_valve.atresia")) {
+      errors.push("Truncus arteriosus cannot have pulmonary atresia — no separate pulmonary valve exists");
+      if (corrected.semilunar_valves?.pulmonary_valve) corrected.semilunar_valves.pulmonary_valve.atresia = false;
+      corrections.push("Cleared: pulmonary_valve.atresia (incompatible with truncus)");
+    }
+    if (o.segmental_analysis?.va_connection !== "single_outlet") {
+      corrections.push("Note: Truncus arteriosus → va_connection should be 'single_outlet'");
+    }
+  }
+
+  // ── Rule 9: IAA + CoA mutual exclusion ──
+  if (isPresentPath(o, "great_arteries.interrupted_aortic_arch.presence")) {
+    if (!o.ductal_structures?.pda?.presence) {
+      warnings.push("IAA requires PDA as source of descending aortic flow — not documented");
+    }
+    if (!o.ventricular_septum?.vsd_presence) {
+      warnings.push("IAA almost always has VSD — not documented");
+    }
+    if (isPresentPath(o, "great_arteries.coarctation.presence")) {
+      errors.push("IAA and CoA are mutually exclusive aortic arch diagnoses");
+      if (corrected.great_arteries) corrected.great_arteries.coarctation = { presence: false };
+      corrections.push("Cleared: coarctation (incompatible with IAA)");
+    }
+  }
+
+  // ── Rule 10: Ebstein anomaly rules ──
+  if (o.av_valves?.tricuspid_valve?.ebstein === true) {
+    // Ebstein cannot coexist with tricuspid atresia
+    if (o.av_valves?.tricuspid_valve?.atresia === true) {
+      errors.push("Ebstein anomaly cannot coexist with tricuspid atresia — mutually exclusive TV morphologies");
+      corrected.av_valves.tricuspid_valve.atresia = false;
+      corrections.push("Cleared: tricuspid_valve.atresia (incompatible with Ebstein)");
+    }
+    // Ebstein typically has ASD/PFO — warn if absent
+    if (!o.atrial_septum?.asd_presence) {
+      warnings.push("Ebstein anomaly — ASD/PFO commonly present; not documented");
+    }
+    // RV outflow obstruction cannot exist in pure Ebstein (atrialized RV ≠ RVOTO)
+    if (isPresentPath(o, "outflow_tract.rvot_obstruction.presence") &&
+        !isPresentPath(o, "semilunar_valves.pulmonary_valve.stenosis")) {
+      warnings.push("Ebstein with RVOTO — confirm functional PS vs. atrialized RV outflow");
+    }
+  }
+
+  // ── Rule 11: AVSD balance — never call unbalanced without explicit hypoplasia ──
+  const hasCommonAV = o.av_valves?.common_av_valve;
+  const hasOstPrimASD = o.atrial_septum?.asd_type === "ostium_primum" || o.atrial_septum?.asd_presence;
+  const hasInletVSD = o.ventricular_septum?.vsd_type === "inlet" || o.ventricular_septum?.vsd_presence;
+  if (hasCommonAV && hasOstPrimASD && hasInletVSD) {
+    const rvHypoplastic = o.ventricles?.rv_size === "hypoplastic";
+    const lvHypoplastic = o.ventricles?.lv_size === "hypoplastic";
+    if (!rvHypoplastic && !lvHypoplastic) {
+      // Ensure diagnosis reflects balanced
+      if ((o.final_diagnosis || "").toLowerCase().includes("unbalanced")) {
+        warnings.push("AVSD labelled as unbalanced but no ventricular hypoplasia documented — should be Complete Balanced AVSD");
+      }
+      // Auto-annotate in corrected
+      corrected._avsd_balance = "balanced";
+      corrections.push("Note: AVSD classified as BALANCED (no ventricular hypoplasia stated)");
+    } else {
+      corrected._avsd_balance = rvHypoplastic ? "unbalanced_RV_dominant" : "unbalanced_LV_dominant";
+      corrections.push(`Note: AVSD classified as UNBALANCED — ${corrected._avsd_balance}`);
+    }
+  }
+
+  // ── Rule 12: Situs inversus + levocardia → unusual, flag ──
+  if (o.segmental_analysis?.situs === "inversus" &&
+      o.segmental_analysis?.cardiac_position === "levocardia") {
+    warnings.push("Situs inversus + levocardia is rare — consider situs ambiguous or isomerism");
+  }
+
+  // ── Rule 11: HLHS must have hypoplastic LV + atresia/stenosis of mitral or aortic valve ──
+  if (o.major_lesions?.hlhs) {
+    if (o.ventricles?.lv_size !== "hypoplastic" && o.ventricles?.lv_size !== null) {
+      warnings.push("HLHS requires hypoplastic LV — lv_size should be 'hypoplastic'");
+    }
+  }
+
+  // ── Rule 12: Single ventricle → document which morphology ──
+  if (o.ventricles?.single_ventricle === true && !o.segmental_analysis?.av_connection) {
+    warnings.push("Single ventricle — AV connection not specified (double_inlet / absent_connection?)");
+  }
+
+  // ── Build segmental summary for UI ──
+  const seg = o.segmental_analysis || {};
+  const segmentalSummary = {
+    atrial_segment: {
+      situs:                  seg.situs          || "solitus",
+      cardiac_position:       seg.cardiac_position || "levocardia",
+      atrial_arrangement:     seg.atrial_arrangement || null,
+      systemic_venous_return: o.systemic_venous_return?.svc_drainage && o.systemic_venous_return.svc_drainage !== "RA"
+                                ? o.systemic_venous_return.svc_drainage : (o.systemic_venous_return?.lsvc ? "LSVC present" : "normal"),
+      pulmonary_venous_return: o.pulmonary_venous_return?.type || "normal"
+    },
+    ventricular_segment: {
+      av_connection:       seg.av_connection       || "concordant",
+      ventricular_loop:    seg.ventricular_loop    || "D_loop",
+      ventricular_topology: seg.ventricular_topology || null,
+      av_valve_morphology: seg.av_valve_morphology  || null
+    },
+    arterial_segment: {
+      va_connection:       seg.va_connection        || "concordant",
+      great_artery_relation: seg.great_artery_relation || "normal",
+      arch_sidedness:      o.great_arteries?.arch_sidedness || null
+    }
+  };
+
+  corrected._segmental_analysis = segmentalSummary;
+  corrected._validation = { errors, warnings, corrections };
+
+  return { corrected, errors, warnings, corrections, segmentalSummary };
+}
+
+
+async function callClaude(systemPrompt, userContent) {
+  const response = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: "claude-sonnet-4-20250514",
+      max_tokens: 2500,
+      system: systemPrompt,
+      messages: [{ role: "user", content: userContent }],
+    }),
+  });
+  const data = await response.json();
+  if (!data.content) throw new Error(data.error?.message || "API error");
+  return data.content.map(b => b.text || "").join("");
+}
+
+const PLACEHOLDER = `Visceroatrial Situs Solitus, Levocardia
+IVC, SVC --> RA, All PV's --> LA
+AV - VA Concordance
+IAS - Large Secundum ASD with Left to Right shunt
+IVS - Moderate size Perimembranous VSD with Left to Right shunt, Gmax: 85 mmHg
+Dilated RA, RV, LA & LV
+Mild TR; TR Gmax: 35 mmHg
+No RVOTO, No LVOTO
+Mild PAH
+Normal biventricular function
+Left Aortic Arch, No PDA`;
+
+// Simple hash for report text → cache key
+function hashStr(s) {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) { h = (Math.imul(31, h) + s.charCodeAt(i)) | 0; }
+  return String(h >>> 0);
+}
+
+// ── Counseling sub-component (needs its own hook scope) ──
+function CounselingPanel({ counseling }) {
+  const { useState } = React;
+  const [lang, setLang] = useState("both");
+
+  // ── Robust parser: handles --- separators, # headers, [HINDI]/[GUJARATI] tags ──
+  // Strategy: find the line that introduces each language section, then grab everything until
+  // the next language header or end of text.
+  const HINDI_RE    = /^(#+\s*)?(HINDI|Hindi|हिंदी|\[HINDI\])/i;
+  const GUJARATI_RE = /^(#+\s*)?(GUJARATI|Gujarati|ગુજરાતી|\[GUJARATI\])/i;
+
+  const lines = counseling.split("\n");
+  let hindiStart = -1, gujaratiStart = -1;
+
+  lines.forEach((line, i) => {
+    const t = line.trim();
+    if (HINDI_RE.test(t)    && hindiStart    === -1) hindiStart    = i;
+    if (GUJARATI_RE.test(t) && gujaratiStart === -1) gujaratiStart = i;
+  });
+
+  let hindi = "", gujarati = "";
+
+  if (hindiStart !== -1 && gujaratiStart !== -1) {
+    // Both markers found — slice between them
+    const firstEnd  = Math.min(hindiStart, gujaratiStart);
+    const secondStart = Math.max(hindiStart, gujaratiStart);
+    if (hindiStart < gujaratiStart) {
+      hindi    = lines.slice(hindiStart + 1, gujaratiStart).join("\n").trim();
+      gujarati = lines.slice(gujaratiStart + 1).join("\n").trim();
+    } else {
+      gujarati = lines.slice(gujaratiStart + 1, hindiStart).join("\n").trim();
+      hindi    = lines.slice(hindiStart + 1).join("\n").trim();
+    }
+  } else if (hindiStart !== -1) {
+    hindi = lines.slice(hindiStart + 1).join("\n").trim();
+  } else if (gujaratiStart !== -1) {
+    gujarati = lines.slice(gujaratiStart + 1).join("\n").trim();
+  } else {
+    // No markers at all — split on --- if present, else put everything in hindi
+    const parts = counseling.split(/\n---+\n/).map(b => b.trim()).filter(Boolean);
+    hindi    = parts[0] || counseling.trim();
+    gujarati = parts[1] || "";
+  }
+
+  // Strip leading --- lines and language header lines from each block
+  const cleanBlock = (text) => text
+    .split("\n")
+    .filter(line => !(/^-{2,}$/.test(line.trim())) && !HINDI_RE.test(line.trim()) && !GUJARATI_RE.test(line.trim()))
+    .join("\n")
+    .trim();
+
+  hindi    = cleanBlock(hindi);
+  gujarati = cleanBlock(gujarati);
+
+  const renderBlock = (text) => {
+    if (!text) return null;
+    return text.split("\n").map((line, i) => {
+      const t = line.trim();
+      if (!t) return <div key={i} style={{ height: 6 }} />;
+      // Strip markdown heading hashes
+      const stripped = t.replace(/^#+\s*/, "");
+      const isSection = /^[🫀🏠🚨🔧]/.test(stripped);
+      if (isSection) return (
+        <div key={i} style={{
+          marginTop: 14, marginBottom: 6, fontSize: 13, fontWeight: 700,
+          color: "#fbbf24", fontFamily: "sans-serif",
+          borderBottom: "1px solid rgba(251,191,36,0.2)", paddingBottom: 4
+        }}>{stripped}</div>
+      );
+      // Bold markdown **text**
+      const parts = stripped.split(/(\*\*[^*]+\*\*)/g);
+      const rendered = parts.map((p, j) =>
+        p.startsWith("**") && p.endsWith("**")
+          ? <strong key={j}>{p.slice(2,-2)}</strong>
+          : p
+      );
+      return (
+        <div key={i} style={{
+          fontSize: 14, lineHeight: 1.85, color: "#e2e8f0",
+          fontFamily: "sans-serif", marginBottom: 2
+        }}>{rendered}</div>
+      );
+    });
+  };
+
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
+        {[["both", "हिंदी + ગુજરાતી"], ["hindi", "हिंदी only"], ["gujarati", "ગુજરાતી only"]].map(([id, label]) => (
+          <button key={id} onClick={() => setLang(id)} style={{
+            padding: "5px 12px", borderRadius: 6, border: "none", cursor: "pointer",
+            fontSize: 12, fontFamily: "sans-serif", fontWeight: lang === id ? 700 : 500,
+            background: lang === id ? "rgba(251,191,36,0.2)" : "rgba(30,41,59,0.6)",
+            color: lang === id ? "#fbbf24" : "#64748b",
+            borderBottom: lang === id ? "2px solid #fbbf24" : "2px solid transparent",
+          }}>{label}</button>
+        ))}
+      </div>
+
+      {(lang === "both" || lang === "hindi") && hindi && (
+        <div style={{
+          background: "rgba(15,23,42,0.7)", border: "1px solid rgba(251,191,36,0.2)",
+          borderRadius: 10, padding: "16px 18px", marginBottom: lang === "both" ? 16 : 0
+        }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#fbbf24", letterSpacing: "0.1em", marginBottom: 10, fontFamily: "monospace" }}>🇮🇳 HINDI — हिंदी</div>
+          {renderBlock(hindi)}
+        </div>
+      )}
+
+      {(lang === "both" || lang === "gujarati") && gujarati && (
+        <div style={{
+          background: "rgba(15,23,42,0.7)", border: "1px solid rgba(251,191,36,0.2)",
+          borderRadius: 10, padding: "16px 18px"
+        }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#fbbf24", letterSpacing: "0.1em", marginBottom: 10, fontFamily: "monospace" }}>🕌 GUJARATI — ગુજરાતી</div>
+          {renderBlock(gujarati)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ManagementPanel({ management }) {
+  var SECTION_DEFS = [
+    { key: "URGENCY",           prefix: "\uD83D\uDD34", color: "#ef4444", bg: "rgba(239,68,68,0.08)"    },
+    { key: "INTERVENTION",      prefix: "\uD83C\uDFE5", color: "#3b82f6", bg: "rgba(59,130,246,0.08)"   },
+    { key: "DECISION",          prefix: "\u2696",       color: "#8b5cf6", bg: "rgba(139,92,246,0.08)"   },
+    { key: "MEDICAL",           prefix: "\uD83D\uDC8A", color: "#10b981", bg: "rgba(16,185,129,0.08)"  },
+    { key: "PRECAUTIONS",       prefix: "\u26A0",       color: "#f59e0b", bg: "rgba(245,158,11,0.08)"   },
+    { key: "FOLLOWUP",          prefix: "\uD83D\uDCC5", color: "#06b6d4", bg: "rgba(6,182,212,0.08)"    },
+    { key: "ALTERNATIVES",      prefix: "\uD83D\uDD04", color: "#6366f1", bg: "rgba(99,102,241,0.08)"   },
+  ];
+
+  var LABELS = {
+    URGENCY:      "URGENCY",
+    INTERVENTION: "RECOMMENDED INTERVENTION",
+    DECISION:     "DECISION BASIS",
+    MEDICAL:      "MEDICAL MANAGEMENT",
+    PRECAUTIONS:  "PRE-INTERVENTION PRECAUTIONS",
+    FOLLOWUP:     "FOLLOW-UP PLAN",
+    ALTERNATIVES: "ALTERNATIVE OPTIONS",
+  };
+
+  // Parse raw text into keyed blocks by detecting section start lines
+  var lines = management.split("\n");
+  var parsed = {};
+  var currentKey = null;
+  var currentLines = [];
+
+  lines.forEach(function(line) {
+    var t = line.trim();
+    var matched = null;
+    SECTION_DEFS.forEach(function(def) {
+      if (!matched && t.indexOf(def.prefix) === 0) matched = def;
+    });
+    if (matched) {
+      if (currentKey) parsed[currentKey] = currentLines.join("\n").trim();
+      currentKey = matched.key;
+      // strip the header line content after the emoji
+      var rest = t.replace(matched.prefix, "").replace(matched.key, "").trim();
+      currentLines = rest ? [rest] : [];
+    } else if (currentKey) {
+      currentLines.push(line);
+    }
+  });
+  if (currentKey) parsed[currentKey] = currentLines.join("\n").trim();
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      {SECTION_DEFS.map(function(def) {
+        var blockText = parsed[def.key];
+        if (!blockText) return null;
+        var blockLines = blockText.split("\n").filter(function(l) { return l.trim(); });
+        return (
+          <div key={def.key} style={{
+            background: def.bg,
+            border: "1px solid " + def.color + "44",
+            borderLeft: "4px solid " + def.color,
+            borderRadius: 8,
+            padding: "10px 14px",
+          }}>
+            <div style={{
+              fontSize: 11, fontWeight: 700, letterSpacing: "0.07em",
+              color: def.color, fontFamily: "monospace", marginBottom: 8,
+              display: "flex", alignItems: "center", gap: 6,
+            }}>
+              <span>{def.prefix}</span>
+              <span>{LABELS[def.key]}</span>
+            </div>
+            {blockLines.map(function(ln, i) {
+              var t2 = ln.trim();
+              if (!t2) return null;
+              var isBullet = t2[0] === "-" || t2[0] === "\u2022" || t2[0] === "\u00B7";
+              var txt = isBullet ? t2.slice(1).trim() : t2;
+              return (
+                <div key={i} style={{
+                  display: "flex", gap: 8,
+                  marginBottom: i < blockLines.length - 1 ? 5 : 0,
+                }}>
+                  {isBullet
+                    ? <span style={{ color: def.color, fontWeight: 700, flexShrink: 0, marginTop: 2 }}>{"\u25B8"}</span>
+                    : null}
+                  <span style={{
+                    fontSize: 13, lineHeight: 1.75, color: "#e2e8f0",
+                    fontFamily: "sans-serif",
+                    fontWeight: (!isBullet && i === 0) ? 600 : 400,
+                  }}>{txt}</span>
+                </div>
+              );
+            })}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+
+function EchoAssistant() {
+  const [report, setReport] = useState("");
+  const [patientAge, setPatientAge] = useState("");
+  const [patientWeight, setPatientWeight] = useState("");
+  const [patientSpo2, setPatientSpo2] = useState("");
+  const [activeTab, setActiveTab] = useState("conclusion");
+  const [conclusion, setConclusion] = useState("");
+  const [ontology, setOntology] = useState(null);
+  const [svgDiagram, setSvgDiagram] = useState("");
+  const [loading, setLoading] = useState({ conclusion: false, ontology: false, diagram: false, counseling: false, management: false });
+  const [counseling, setCounseling] = useState("");
+  const [management, setManagement] = useState("");
+  const [errors, setErrors] = useState({});
+  const [generated, setGenerated] = useState({ conclusion: false, ontology: false, diagram: false, counseling: false, management: false });
+  const [validation, setValidation] = useState(null);  // { errors, warnings, corrections, segmentalSummary }
+  // Cache: { [reportHash]: { conclusion, ontology, diagram, validation } }
+  const cache = useRef({});
+  // Track which report hash current outputs belong to
+  const currentHash = useRef("");
+
+  // When report changes, check if we have cached results and restore them,
+  // otherwise clear stale outputs
+  const onReportChange = (val) => {
+    setReport(val);
+    const h = hashStr(val.trim());
+    if (h !== currentHash.current) {
+      currentHash.current = h;
+      const cached = cache.current[h] || {};
+      setConclusion(cached.conclusion || "");
+      setOntology(cached.ontology || null);
+      setSvgDiagram(cached.diagram || "");
+      setCounseling(cached.counseling || "");
+      setManagement(cached.management || "");
+      setValidation(cached.validation || null);
+      setGenerated({
+        conclusion: !!cached.conclusion,
+        ontology: !!cached.ontology,
+        diagram: !!cached.diagram,
+        counseling: !!cached.counseling,
+        management: !!cached.management,
+      });
+      setErrors({});
+    }
+  };
+
+  const generate = async (type) => {
+    if (!report.trim()) return;
+    const h = hashStr(report.trim());
+    // Cache hit — skip API call entirely
+    if (cache.current[h]?.[type]) {
+      if (type === "conclusion") setConclusion(cache.current[h].conclusion);
+      if (type === "ontology") setOntology(cache.current[h].ontology);
+      if (type === "diagram") setSvgDiagram(cache.current[h].diagram);
+      setGenerated(g => ({ ...g, [type]: true }));
+      return;
+    }
+    setLoading(l => ({ ...l, [type]: true }));
+    setErrors(e => ({ ...e, [type]: null }));
+    try {
+      if (!cache.current[h]) cache.current[h] = {};
+
+      if (type === "conclusion") {
+        const result = await callClaude(CONCLUSION_SYSTEM_PROMPT, `Generate conclusion for this echo report:\n\n${report}`);
+        const val = result.trim();
+        setConclusion(val);
+        cache.current[h].conclusion = val;
+        setGenerated(g => ({ ...g, conclusion: true }));
+
+      } else if (type === "ontology") {
+        const result = await callClaude(ONTOLOGY_SYSTEM_PROMPT, `Convert this echo report to CHD ontology JSON:\n\n${report}`);
+        const clean = result.replace(/```json|```/g, "").trim();
+        const rawParsed = JSON.parse(clean);
+        // ── Run segmental rule engine ──
+        const { corrected, errors: vErr, warnings: vWarn, corrections: vFix, segmentalSummary } = runSegmentalRuleEngine(rawParsed);
+        const vResult = { errors: vErr, warnings: vWarn, corrections: vFix, segmentalSummary };
+        setOntology(corrected);
+        setValidation(vResult);
+        cache.current[h].ontology = corrected;
+        cache.current[h].validation = vResult;
+        setGenerated(g => ({ ...g, ontology: true }));
+
+      } else if (type === "diagram") {
+        // Reuse cached ontology for this report if available, else fetch
+        let ont = cache.current[h].ontology || ontology;
+        if (!ont) {
+          const r = await callClaude(ONTOLOGY_SYSTEM_PROMPT, `Convert this echo report to CHD ontology JSON:\n\n${report}`);
+          const clean = r.replace(/```json|```/g, "").trim();
+          const rawOnt = JSON.parse(clean);
+          const { corrected, errors: vErr, warnings: vWarn, corrections: vFix, segmentalSummary } = runSegmentalRuleEngine(rawOnt);
+          const vResult = { errors: vErr, warnings: vWarn, corrections: vFix, segmentalSummary };
+          ont = corrected;
+          setOntology(ont);
+          setValidation(vResult);
+          cache.current[h].ontology = ont;
+          cache.current[h].validation = vResult;
+        }
+        const svg = await callClaude(DIAGRAM_SYSTEM_PROMPT, `Generate CHD diagram SVG for this ontology:\n\n${JSON.stringify(ont, null, 2)}`);
+        const svgMatch = svg.match(/<svg[\s\S]*<\/svg>/i);
+        const val = svgMatch ? svgMatch[0] : svg;
+        setSvgDiagram(val);
+        cache.current[h].diagram = val;
+        setGenerated(g => ({ ...g, diagram: true }));
+
+      } else if (type === "counseling") {
+        // Need conclusion/diagnosis — reuse from cache or extract
+        let diagText = cache.current[h]?.conclusion || conclusion;
+        if (!diagText) {
+          diagText = await callClaude(CONCLUSION_SYSTEM_PROMPT, `Generate conclusion for this echo report:\n\n${report}`);
+          diagText = diagText.trim();
+          setConclusion(diagText);
+          cache.current[h].conclusion = diagText;
+          setGenerated(g => ({ ...g, conclusion: true }));
+        }
+        const prompt = `Echo report:\n${report}\n\nClinical conclusion:\n${diagText}\n\nGenerate parent counseling explanation in Hindi and Gujarati as instructed.`;
+        const val = await callClaude(COUNSELING_SYSTEM_PROMPT, prompt);
+        setCounseling(val.trim());
+        cache.current[h].counseling = val.trim();
+        setGenerated(g => ({ ...g, counseling: true }));
+
+      } else if (type === "management") {
+        // Need conclusion — reuse from cache or generate
+        let diagText = cache.current[h]?.conclusion || conclusion;
+        if (!diagText) {
+          diagText = await callClaude(CONCLUSION_SYSTEM_PROMPT, `Generate conclusion for this echo report:\n\n${report}`);
+          diagText = diagText.trim();
+          setConclusion(diagText);
+          cache.current[h].conclusion = diagText;
+          setGenerated(g => ({ ...g, conclusion: true }));
+        }
+        const ageStr   = patientAge    ? `Age: ${patientAge}` : "Age: not specified";
+        const wtStr    = patientWeight ? `Weight: ${patientWeight} kg` : "Weight: not specified";
+        const spo2Str  = patientSpo2   ? `SpO2: ${patientSpo2}%` : "SpO2: not specified";
+        const mgmtPrompt = `PATIENT DETAILS:\n${ageStr}\n${wtStr}\n${spo2Str}\n\nECHO REPORT:\n${report}\n\nCLINICAL CONCLUSION:\n${diagText}\n\nProvide the complete management plan as instructed, using the patient details above.`;
+        const val = await callClaude(MANAGEMENT_SYSTEM_PROMPT, mgmtPrompt);
+        setManagement(val.trim());
+        cache.current[h].management = val.trim();
+        setGenerated(g => ({ ...g, management: true }));
+      }
+    } catch (err) {
+      setErrors(e => ({ ...e, [type]: err.message }));
+    }
+    setLoading(l => ({ ...l, [type]: false }));
+  };
+
+  const copyText = (text) => navigator.clipboard.writeText(text);
+
+  const tabs = [
+    { id: "conclusion", label: "Conclusion", icon: "📋" },
+    { id: "ontology", label: "Ontology", icon: "🔬" },
+    { id: "diagram", label: "Diagram", icon: "🫀" },
+    { id: "counseling", label: "Family Counseling", icon: "🗣️" },
+    { id: "management", label: "Management", icon: "💊" },
+  ];
+
+  // Section headers for top-level ontology keys
+  const SECTION_LABELS = {
+    segmental_analysis: "① Segmental Analysis",
+    systemic_venous_return: "② Systemic Venous Return",
+    pulmonary_venous_return: "③ Pulmonary Venous Return",
+    atrial_septum: "④ Atrial Septum",
+    ventricular_septum: "⑤ Ventricular Septum",
+    av_valves: "⑥ AV Valves",
+    ventricles: "⑦ Ventricles",
+    outflow_tract: "⑧ Outflow Tracts",
+    semilunar_valves: "⑨ Semilunar Valves",
+    great_arteries: "⑩ Great Arteries",
+    ductal_structures: "⑪ Ductal Structures",
+    major_lesions: "⑫ Major Lesions",
+    hemodynamics: "⑬ Hemodynamics",
+    surgical_history: "⑭ Surgical History",
+    final_diagnosis: "⑮ Final Diagnosis",
+    _segmental_analysis: null, // hide internal field
+    _validation: null,         // hide internal field
+  };
+
+  function hasAnyValue(obj) {
+    if (obj === null || obj === undefined) return false;
+    if (typeof obj !== "object") return true;
+    return Object.values(obj).some(v => hasAnyValue(v));
+  }
+
+  const renderValue = (v) => {
+    if (v === null || v === undefined) return null;
+    if (typeof v === "boolean") return <span style={{ color: v ? "#22c55e" : "#ef4444" }}>{String(v)}</span>;
+    if (typeof v === "number") return <span style={{ color: "#f59e0b" }}>{v}</span>;
+    return <span style={{ color: "#e2e8f0" }}>{String(v)}</span>;
+  };
+
+  const renderOntologyLeaf = (obj, depth = 0) => {
+    if (obj === null || obj === undefined) return null;
+    if (typeof obj !== "object") return renderValue(obj);
+    const nonNull = Object.entries(obj).filter(([k, v]) => hasAnyValue(v) && !k.startsWith("_"));
+    if (nonNull.length === 0) return null;
+    return (
+      <div style={{ marginLeft: depth > 0 ? 12 : 0 }}>
+        {nonNull.map(([k, v]) => (
+          <div key={k} style={{ display: "flex", gap: 6, marginBottom: 2, alignItems: "flex-start" }}>
+            <span style={{ color: "#93c5fd", minWidth: 130, fontWeight: 500, fontSize: 11, flexShrink: 0, opacity: 0.9 }}>
+              {k.replace(/_/g, " ")}
+            </span>
+            <span style={{ flex: 1, fontSize: 11 }}>
+              {typeof v === "object" ? renderOntologyLeaf(v, depth + 1) : renderValue(v)}
+            </span>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
+  const renderOntology = (obj) => {
+    if (!obj) return null;
+    const sections = Object.entries(obj).filter(([k]) => SECTION_LABELS[k] !== null && !k.startsWith("_"));
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+        {sections.map(([k, v]) => {
+          const label = SECTION_LABELS[k];
+          const content = renderOntologyLeaf(v, 1);
+          if (!content && k !== "final_diagnosis") return null;
+          return (
+            <div key={k} style={{ marginBottom: 6 }}>
+              {label && (
+                <div style={{
+                  fontSize: 10, fontWeight: 700, color: "#7dd3fc", letterSpacing: "0.08em",
+                  marginBottom: 3, borderBottom: "1px solid rgba(71,85,105,0.3)", paddingBottom: 2,
+                  fontFamily: "monospace"
+                }}>{label}</div>
+              )}
+              {k === "final_diagnosis"
+                ? <div style={{ fontSize: 14, color: "#fbbf24", fontWeight: 700, fontFamily: "Georgia, serif" }}>{v || "—"}</div>
+                : content || <span style={{ fontSize: 10, color: "#334155", fontStyle: "italic" }}>no data</span>
+              }
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
+  return (
+    <div style={{
+      minHeight: "100vh",
+      background: "linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f172a 100%)",
+      fontFamily: "'Georgia', 'Times New Roman', serif",
+      color: "#e2e8f0",
+      padding: "16px 12px",
+      boxSizing: "border-box",
+    }}>
+      {/* Header */}
+      <div style={{ maxWidth: 860, margin: "0 auto 20px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 4 }}>
+          <div style={{
+            width: 38, height: 38, borderRadius: "50%", flexShrink: 0,
+            background: "linear-gradient(135deg, #1d4ed8, #7c3aed)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            fontSize: 18, boxShadow: "0 0 16px rgba(124,58,237,0.4)"
+          }}>🫀</div>
+          <div>
+            <h1 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: "#f1f5f9", lineHeight: 1.2 }}>
+              Echo Report Assistant
+            </h1>
+            <p style={{ margin: 0, fontSize: 10, color: "#64748b", fontFamily: "monospace", letterSpacing: "0.05em" }}>
+              UN MEHTA INSTITUTE · PEDIATRIC ECHO CDSS
+            </p>
+          </div>
+        </div>
+        <div style={{ height: 1, background: "linear-gradient(90deg, #1d4ed8, transparent)", marginTop: 10 }} />
+      </div>
+
+      <div style={{ maxWidth: 860, margin: "0 auto", display: "flex", flexDirection: "column", gap: 16 }}>
+
+        {/* Input Panel */}
+        <div style={{
+          background: "rgba(30,41,59,0.85)", borderRadius: 14, padding: 16,
+          border: "1px solid rgba(71,85,105,0.4)", boxShadow: "0 4px 20px rgba(0,0,0,0.3)"
+        }}>
+          <label style={{ display: "block", fontSize: 10, fontWeight: 700, color: "#7dd3fc", letterSpacing: "0.12em", marginBottom: 8, fontFamily: "monospace" }}>
+            ECHO REPORT FINDINGS
+          </label>
+          <textarea
+            value={report}
+            onChange={e => onReportChange(e.target.value)}
+            placeholder={PLACEHOLDER}
+            rows={8}
+            style={{
+              width: "100%", boxSizing: "border-box",
+              background: "rgba(15,23,42,0.9)", border: "1px solid rgba(71,85,105,0.5)",
+              borderRadius: 8, padding: "12px 14px", color: "#cbd5e1",
+              fontSize: 13, lineHeight: 1.7, resize: "vertical",
+              fontFamily: "'Courier New', monospace", outline: "none",
+              transition: "border-color 0.2s",
+            }}
+            onFocus={e => e.target.style.borderColor = "#3b82f6"}
+            onBlur={e => e.target.style.borderColor = "rgba(71,85,105,0.5)"}
+          />
+
+          {/* Patient details row — required for Management tab */}
+          <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end" }}>
+            <div style={{ flex: "1 1 140px" }}>
+              <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "#94a3b8", letterSpacing: "0.1em", marginBottom: 4, fontFamily: "monospace" }}>
+                AGE
+              </label>
+              <input
+                value={patientAge}
+                onChange={e => setPatientAge(e.target.value)}
+                placeholder="e.g. 6 months, 2 years"
+                style={{
+                  width: "100%", boxSizing: "border-box",
+                  background: "rgba(15,23,42,0.9)", border: "1px solid rgba(71,85,105,0.5)",
+                  borderRadius: 7, padding: "7px 10px", color: "#cbd5e1",
+                  fontSize: 12, fontFamily: "sans-serif", outline: "none",
+                  transition: "border-color 0.2s",
+                }}
+                onFocus={e => e.target.style.borderColor = "#10b981"}
+                onBlur={e => e.target.style.borderColor = "rgba(71,85,105,0.5)"}
+              />
+            </div>
+            <div style={{ flex: "1 1 100px" }}>
+              <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "#94a3b8", letterSpacing: "0.1em", marginBottom: 4, fontFamily: "monospace" }}>
+                WEIGHT (kg)
+              </label>
+              <input
+                value={patientWeight}
+                onChange={e => setPatientWeight(e.target.value)}
+                placeholder="e.g. 5.2"
+                type="number"
+                min="0"
+                style={{
+                  width: "100%", boxSizing: "border-box",
+                  background: "rgba(15,23,42,0.9)", border: "1px solid rgba(71,85,105,0.5)",
+                  borderRadius: 7, padding: "7px 10px", color: "#cbd5e1",
+                  fontSize: 12, fontFamily: "sans-serif", outline: "none",
+                  transition: "border-color 0.2s",
+                }}
+                onFocus={e => e.target.style.borderColor = "#10b981"}
+                onBlur={e => e.target.style.borderColor = "rgba(71,85,105,0.5)"}
+              />
+            </div>
+            <div style={{ flex: "1 1 100px" }}>
+              <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: patientSpo2 && parseInt(patientSpo2) < 80 ? "#ef4444" : "#94a3b8", letterSpacing: "0.1em", marginBottom: 4, fontFamily: "monospace" }}>
+                SpO2 (%)
+              </label>
+              <input
+                value={patientSpo2}
+                onChange={e => setPatientSpo2(e.target.value)}
+                placeholder="e.g. 92"
+                type="number"
+                min="0"
+                max="100"
+                style={{
+                  width: "100%", boxSizing: "border-box",
+                  background: patientSpo2 && parseInt(patientSpo2) < 80 ? "rgba(239,68,68,0.08)" : "rgba(15,23,42,0.9)",
+                  border: patientSpo2 && parseInt(patientSpo2) < 80 ? "1px solid #ef4444" : "1px solid rgba(71,85,105,0.5)",
+                  borderRadius: 7, padding: "7px 10px",
+                  color: patientSpo2 && parseInt(patientSpo2) < 80 ? "#fca5a5" : "#cbd5e1",
+                  fontSize: 12, fontFamily: "sans-serif", outline: "none",
+                  fontWeight: patientSpo2 && parseInt(patientSpo2) < 80 ? 700 : 400,
+                  transition: "all 0.2s",
+                }}
+                onFocus={e => { if (!(patientSpo2 && parseInt(patientSpo2) < 80)) e.target.style.borderColor = "#10b981"; }}
+                onBlur={e => { if (!(patientSpo2 && parseInt(patientSpo2) < 80)) e.target.style.borderColor = "rgba(71,85,105,0.5)"; }}
+              />
+            </div>
+            {patientSpo2 && parseInt(patientSpo2) < 80 && (
+              <div style={{
+                flex: "0 0 auto", background: "rgba(239,68,68,0.12)", border: "1px solid #ef444444",
+                borderRadius: 6, padding: "6px 10px", fontSize: 11, color: "#fca5a5",
+                fontFamily: "monospace", fontWeight: 700, alignSelf: "flex-end", marginBottom: 1,
+              }}>
+                {"⚠"} LOW SpO2
+              </div>
+            )}
+          </div>
+          {/* Buttons */}
+          <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {tabs.map(t => {
+              const isCached = !!cache.current[hashStr(report.trim())]?.[t.id];
+              const isLoading = loading[t.id];
+              return (
+                <button
+                  key={t.id}
+                  onClick={() => { setActiveTab(t.id); generate(t.id); }}
+                  disabled={isLoading || !report.trim() || (t.id === "management" && (!patientAge.trim() || !patientSpo2.trim()))}
+                  style={{
+                    padding: "8px 14px", borderRadius: 7, border: "none",
+                    cursor: (report.trim() && !isLoading && !(t.id === "management" && (!patientAge.trim() || !patientSpo2.trim()))) ? "pointer" : "not-allowed",
+                    background: isCached
+                      ? "linear-gradient(135deg, #065f46, #047857)"
+                      : isLoading
+                        ? "rgba(59,130,246,0.3)"
+                        : "linear-gradient(135deg, #1d4ed8, #4f46e5)",
+                    color: "#fff", fontWeight: 600, fontSize: 12,
+                    display: "flex", alignItems: "center", gap: 5,
+                    opacity: (!report.trim() || (t.id === 'management' && (!patientAge.trim() || !patientSpo2.trim()))) ? 0.4 : 1,
+                    transition: "all 0.2s",
+                    boxShadow: isLoading ? "none" : "0 2px 8px rgba(79,70,229,0.3)",
+                    fontFamily: "sans-serif",
+                  }}
+                >
+                  <span>{t.icon}</span>
+                  <span>
+                    {isLoading ? "Generating…" : isCached ? `${t.label} ✓` : `Generate ${t.label}`}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          {/* Cache hint */}
+          {Object.values(generated).some(Boolean) && (
+            <p style={{ margin: "8px 0 0", fontSize: 10, color: "#475569", fontFamily: "monospace" }}>
+              ✓ cached — switching reports regenerates; same report reuses stored results
+            </p>
+          )}
+        </div>
+
+        {/* Output Panel */}
+        <div style={{
+          background: "rgba(30,41,59,0.85)", borderRadius: 14,
+          border: "1px solid rgba(71,85,105,0.4)", boxShadow: "0 4px 20px rgba(0,0,0,0.3)",
+          overflow: "hidden",
+        }}>
+          {/* Tabs */}
+          <div style={{ display: "flex", borderBottom: "1px solid rgba(71,85,105,0.4)" }}>
+            {tabs.map(t => (
+              <button key={t.id} onClick={() => setActiveTab(t.id)}
+                style={{
+                  flex: 1, padding: "11px 4px", border: "none", cursor: "pointer",
+                  background: activeTab === t.id ? "rgba(59,130,246,0.15)" : "transparent",
+                  color: activeTab === t.id ? "#7dd3fc" : "#64748b",
+                  borderBottom: activeTab === t.id ? "2px solid #3b82f6" : "2px solid transparent",
+                  fontWeight: activeTab === t.id ? 700 : 500,
+                  fontSize: 12, transition: "all 0.15s",
+                  display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
+                  fontFamily: "sans-serif",
+                }}>
+                {t.icon} {t.label}
+                {generated[t.id] && <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#22c55e", display: "inline-block" }} />}
+              </button>
+            ))}
+          </div>
+
+          <div style={{ padding: 16, minHeight: 200 }}>
+
+            {/* CONCLUSION TAB */}
+            {activeTab === "conclusion" && (
+              <div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: "#7dd3fc", letterSpacing: "0.12em", fontFamily: "monospace" }}>GENERATED CONCLUSION</span>
+                  {conclusion && (
+                    <button onClick={() => copyText(conclusion)}
+                      style={{ background: "rgba(59,130,246,0.2)", border: "1px solid rgba(59,130,246,0.3)", borderRadius: 5, padding: "3px 10px", color: "#7dd3fc", cursor: "pointer", fontSize: 11, fontFamily: "sans-serif" }}>
+                      Copy
+                    </button>
+                  )}
+                </div>
+                {loading.conclusion ? <LoadingPulse text="Generating conclusion…" />
+                  : errors.conclusion ? <ErrorMsg msg={errors.conclusion} />
+                  : conclusion ? (
+                    <div style={{
+                      background: "rgba(15,23,42,0.9)", borderRadius: 8, padding: "14px 16px",
+                      border: "1px solid rgba(34,197,94,0.2)", fontSize: 14, lineHeight: 1.8,
+                      color: "#e2e8f0", fontFamily: "Georgia, serif", whiteSpace: "pre-wrap",
+                    }}>{conclusion}</div>
+                  ) : <EmptyState text="Enter echo findings above and click Generate Conclusion" />}
+              </div>
+            )}
+
+            {/* ONTOLOGY TAB */}
+            {activeTab === "ontology" && (
+              <div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: "#7dd3fc", letterSpacing: "0.12em", fontFamily: "monospace" }}>CHD ONTOLOGY · JSON</span>
+                  {ontology && (
+                    <button onClick={() => copyText(JSON.stringify(ontology, null, 2))}
+                      style={{ background: "rgba(59,130,246,0.2)", border: "1px solid rgba(59,130,246,0.3)", borderRadius: 5, padding: "3px 10px", color: "#7dd3fc", cursor: "pointer", fontSize: 11, fontFamily: "sans-serif" }}>
+                      Copy JSON
+                    </button>
+                  )}
+                </div>
+                {loading.ontology ? <LoadingPulse text="Extracting structured ontology…" />
+                  : errors.ontology ? <ErrorMsg msg={errors.ontology} />
+                  : ontology ? (
+                    <div style={{
+                      background: "rgba(15,23,42,0.9)", borderRadius: 8, padding: "14px 16px",
+                      border: "1px solid rgba(251,191,36,0.2)", overflowX: "auto",
+                      fontFamily: "'Courier New', monospace",
+                    }}>
+                      {renderOntology(ontology)}
+                    </div>
+                  ) : <EmptyState text="Enter echo findings above and click Generate Ontology" />}
+              </div>
+            )}
+
+            {/* DIAGRAM TAB */}
+            {activeTab === "diagram" && (
+              <div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: "#7dd3fc", letterSpacing: "0.12em", fontFamily: "monospace" }}>CHD TEACHING DIAGRAM</span>
+                  {svgDiagram && (
+                    <button onClick={() => {
+                      const dataUri = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svgDiagram);
+                      const a = document.createElement("a");
+                      a.href = dataUri;
+                      a.download = "chd_diagram.svg";
+                      document.body.appendChild(a);
+                      a.click();
+                      document.body.removeChild(a);
+                    }}
+                      style={{ background: "rgba(59,130,246,0.2)", border: "1px solid rgba(59,130,246,0.3)", borderRadius: 5, padding: "3px 10px", color: "#7dd3fc", cursor: "pointer", fontSize: 11, fontFamily: "sans-serif" }}>
+                      Download SVG
+                    </button>
+                  )}
+                </div>
+                {loading.diagram ? <LoadingPulse text="Generating anatomical diagram…" />
+                  : errors.diagram ? <ErrorMsg msg={errors.diagram} />
+                  : svgDiagram ? (
+                    // Mobile-safe: horizontally scrollable, SVG scales to container
+                    <div style={{
+                      background: "#fff", borderRadius: 8,
+                      border: "1px solid rgba(71,85,105,0.3)",
+                      overflowX: "auto", overflowY: "auto",
+                      WebkitOverflowScrolling: "touch",
+                      maxHeight: "70vh",
+                      // Make inner SVG responsive
+                    }}>
+                      <div style={{ minWidth: 320 }}
+                        dangerouslySetInnerHTML={{
+                          __html: svgDiagram.replace(
+                            /<svg([^>]*)>/i,
+                            (match, attrs) => {
+                              // Extract width/height to set viewBox if missing
+                              const wMatch = attrs.match(/width="(\d+)"/);
+                              const hMatch = attrs.match(/height="(\d+)"/);
+                              const w = wMatch ? wMatch[1] : "580";
+                              const h = hMatch ? hMatch[1] : "600";
+                              const hasVB = /viewBox/.test(attrs);
+                              const vb = hasVB ? "" : ` viewBox="0 0 ${w} ${h}"`;
+                              // Remove fixed width/height, add viewBox + 100% width for responsiveness
+                              const cleanAttrs = attrs
+                                .replace(/width="[^"]*"/, 'width="100%"')
+                                .replace(/height="[^"]*"/, `height="auto"`);
+                              return `<svg${cleanAttrs}${vb} style="display:block;max-width:100%;height:auto;min-width:280px">`;
+                            }
+                          )
+                        }}
+                      />
+                    </div>
+                  ) : <EmptyState text="Enter echo findings above and click Generate Diagram" />}
+              </div>
+            )}
+
+            {/* COUNSELING TAB */}
+            {activeTab === "counseling" && (
+              <div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: "#7dd3fc", letterSpacing: "0.12em", fontFamily: "monospace" }}>PARENT COUNSELING — HINDI &amp; GUJARATI</span>
+                  {counseling && (
+                    <button onClick={() => copyText(counseling)}
+                      style={{ background: "rgba(59,130,246,0.2)", border: "1px solid rgba(59,130,246,0.3)", borderRadius: 5, padding: "3px 10px", color: "#7dd3fc", cursor: "pointer", fontSize: 11, fontFamily: "sans-serif" }}>
+                      Copy Text
+                    </button>
+                  )}
+                </div>
+
+                {loading.counseling ? <LoadingPulse text="Generating family counseling in Hindi & Gujarati…" />
+                  : errors.counseling ? <ErrorMsg msg={errors.counseling} />
+                  : counseling ? (
+                    <CounselingPanel counseling={counseling} />
+                  ) : (
+                    <EmptyState text="Enter echo findings above and click Family Counseling" />
+                  )}
+              </div>
+            )}
+
+            {activeTab === "management" && (
+              <div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: "#34d399", letterSpacing: "0.12em", fontFamily: "monospace" }}>MANAGEMENT PLAN — AGE · SpO2 · ECHO BASED</span>
+                  {management && (
+                    <button onClick={() => copyText(management)}
+                      style={{ background: "rgba(16,185,129,0.2)", border: "1px solid rgba(16,185,129,0.3)", borderRadius: 5, padding: "3px 10px", color: "#34d399", cursor: "pointer", fontSize: 11, fontFamily: "sans-serif" }}>
+                      Copy Text
+                    </button>
+                  )}
+                </div>
+                {loading.management ? <LoadingPulse text="Generating management plan…" />
+                  : errors.management ? <ErrorMsg msg={errors.management} />
+                  : management ? (
+                    <ManagementPanel management={management} />
+                  ) : (
+                    <div style={{ padding: "30px 16px", textAlign: "center" }}>
+                      <div style={{ fontSize: 26, marginBottom: 10 }}>{"\uD83D\uDC8A"}</div>
+                      <div style={{ color: "#64748b", fontFamily: "sans-serif", fontSize: 13, lineHeight: 1.8 }}>
+                        Enter echo report, then fill{" "}
+                        <span style={{ color: "#10b981", fontWeight: 700 }}>Age</span>{" + "}
+                        <span style={{ color: "#10b981", fontWeight: 700 }}>SpO2</span>{" "}
+                        above, then click <strong style={{ color: "#fff" }}>Generate Management</strong>
+                      </div>
+                      {report.trim() && (!patientAge.trim() || !patientSpo2.trim()) && (
+                        <div style={{
+                          marginTop: 12, background: "rgba(245,158,11,0.1)",
+                          border: "1px solid rgba(245,158,11,0.3)", borderRadius: 7,
+                          padding: "8px 14px", fontSize: 11, color: "#fbbf24", fontFamily: "monospace",
+                        }}>
+                          {"⚠"}{!patientAge.trim() ? "  Age required" : ""}{!patientSpo2.trim() ? "  SpO₂ required" : ""}
+                        </div>
+                      )}
+                    </div>
+                  )}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* ── Validation Panel ── */}
+        {validation && (
+          <div style={{
+            background: "rgba(15,23,42,0.9)", borderRadius: 14,
+            border: `1px solid ${validation.errors.length > 0 ? "rgba(239,68,68,0.5)" : validation.warnings.length > 0 ? "rgba(251,191,36,0.4)" : "rgba(34,197,94,0.4)"}`,
+            overflow: "hidden",
+          }}>
+            {/* Header */}
+            <div style={{
+              padding: "10px 16px", display: "flex", alignItems: "center", gap: 10,
+              background: validation.errors.length > 0
+                ? "rgba(239,68,68,0.12)"
+                : validation.warnings.length > 0
+                  ? "rgba(251,191,36,0.1)"
+                  : "rgba(34,197,94,0.1)",
+              borderBottom: "1px solid rgba(71,85,105,0.3)"
+            }}>
+              <span style={{ fontSize: 14 }}>
+                {validation.errors.length > 0 ? "🚨" : validation.warnings.length > 0 ? "⚠️" : "✅"}
+              </span>
+              <span style={{ fontSize: 11, fontWeight: 700, fontFamily: "monospace", letterSpacing: "0.1em", color: "#cbd5e1" }}>
+                SEGMENTAL RULE ENGINE
+              </span>
+              <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
+                {validation.errors.length > 0 && (
+                  <span style={{ background: "rgba(239,68,68,0.2)", color: "#fca5a5", borderRadius: 4, padding: "1px 7px", fontSize: 10, fontFamily: "monospace" }}>
+                    {validation.errors.length} ERROR{validation.errors.length > 1 ? "S" : ""}
+                  </span>
+                )}
+                {validation.warnings.length > 0 && (
+                  <span style={{ background: "rgba(251,191,36,0.15)", color: "#fde68a", borderRadius: 4, padding: "1px 7px", fontSize: 10, fontFamily: "monospace" }}>
+                    {validation.warnings.length} WARN
+                  </span>
+                )}
+                {validation.corrections.length > 0 && (
+                  <span style={{ background: "rgba(99,102,241,0.2)", color: "#c7d2fe", borderRadius: 4, padding: "1px 7px", fontSize: 10, fontFamily: "monospace" }}>
+                    {validation.corrections.length} AUTO-FIX
+                  </span>
+                )}
+                {validation.errors.length === 0 && validation.warnings.length === 0 && (
+                  <span style={{ background: "rgba(34,197,94,0.15)", color: "#86efac", borderRadius: 4, padding: "1px 7px", fontSize: 10, fontFamily: "monospace" }}>
+                    VALID
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <div style={{ padding: "12px 16px", display: "flex", flexDirection: "column", gap: 10 }}>
+
+              {/* Segmental Analysis Summary */}
+              {validation.segmentalSummary && (
+                <div>
+                  <p style={{ margin: "0 0 6px", fontSize: 10, fontWeight: 700, color: "#7dd3fc", fontFamily: "monospace", letterSpacing: "0.1em" }}>
+                    SEGMENTAL ANALYSIS (Van Praagh)
+                  </p>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 6 }}>
+                    {[
+                      { label: "① Atrial", data: validation.segmentalSummary.atrial_segment },
+                      { label: "② Ventricular", data: validation.segmentalSummary.ventricular_segment },
+                      { label: "③ Arterial", data: validation.segmentalSummary.arterial_segment },
+                    ].map(seg => (
+                      <div key={seg.label} style={{
+                        background: "rgba(30,41,59,0.8)", borderRadius: 7, padding: "8px 10px",
+                        border: "1px solid rgba(71,85,105,0.3)"
+                      }}>
+                        <p style={{ margin: "0 0 4px", fontSize: 10, fontWeight: 700, color: "#94a3b8", fontFamily: "monospace" }}>{seg.label}</p>
+                        {Object.entries(seg.data).filter(([,v]) => v && v !== "normal" && v !== "concordant" && v !== "D-loop" && v !== "levocardia" && v !== "solitus").map(([k, v]) => (
+                          <div key={k} style={{ fontSize: 11, color: "#f59e0b", fontFamily: "monospace" }}>
+                            {k.replace(/_/g," ")}: <span style={{ color: "#e2e8f0" }}>{v}</span>
+                          </div>
+                        ))}
+                        {Object.entries(seg.data).every(([,v]) => !v || v === "normal" || v === "concordant" || v === "D-loop" || v === "levocardia" || v === "solitus") && (
+                          <div style={{ fontSize: 11, color: "#475569", fontFamily: "monospace", fontStyle: "italic" }}>normal</div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Errors */}
+              {validation.errors.length > 0 && (
+                <div>
+                  <p style={{ margin: "0 0 4px", fontSize: 10, fontWeight: 700, color: "#fca5a5", fontFamily: "monospace", letterSpacing: "0.1em" }}>
+                    ANATOMICAL ERRORS
+                  </p>
+                  {validation.errors.map((e, i) => (
+                    <div key={i} style={{ display: "flex", gap: 6, alignItems: "flex-start", marginBottom: 3 }}>
+                      <span style={{ color: "#ef4444", fontSize: 11, flexShrink: 0 }}>✕</span>
+                      <span style={{ fontSize: 11, color: "#fca5a5", fontFamily: "monospace" }}>{e}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Warnings */}
+              {validation.warnings.length > 0 && (
+                <div>
+                  <p style={{ margin: "0 0 4px", fontSize: 10, fontWeight: 700, color: "#fde68a", fontFamily: "monospace", letterSpacing: "0.1em" }}>
+                    INCOMPLETE ANATOMY
+                  </p>
+                  {validation.warnings.map((w, i) => (
+                    <div key={i} style={{ display: "flex", gap: 6, alignItems: "flex-start", marginBottom: 3 }}>
+                      <span style={{ color: "#f59e0b", fontSize: 11, flexShrink: 0 }}>△</span>
+                      <span style={{ fontSize: 11, color: "#fde68a", fontFamily: "monospace" }}>{w}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Auto-corrections */}
+              {validation.corrections.length > 0 && (
+                <div>
+                  <p style={{ margin: "0 0 4px", fontSize: 10, fontWeight: 700, color: "#c7d2fe", fontFamily: "monospace", letterSpacing: "0.1em" }}>
+                    AUTO-CORRECTIONS APPLIED
+                  </p>
+                  {validation.corrections.map((c, i) => (
+                    <div key={i} style={{ display: "flex", gap: 6, alignItems: "flex-start", marginBottom: 3 }}>
+                      <span style={{ color: "#818cf8", fontSize: 11, flexShrink: 0 }}>⟳</span>
+                      <span style={{ fontSize: 11, color: "#c7d2fe", fontFamily: "monospace" }}>{c}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {validation.errors.length === 0 && validation.warnings.length === 0 && (
+                <p style={{ margin: 0, fontSize: 11, color: "#86efac", fontFamily: "monospace" }}>
+                  ✓ Anatomy is internally consistent. No segmental conflicts detected.
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+
+        <p style={{ textAlign: "center", fontSize: 10, color: "#334155", fontFamily: "monospace", letterSpacing: "0.05em", margin: 0 }}>
+          RULE-BASED CDSS · GUIDELINE-DERIVED · FOR EDUCATIONAL USE ONLY
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function LoadingPulse({ text }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "32px 0", justifyContent: "center" }}>
+      <div style={{ display: "flex", gap: 4 }}>
+        {[0, 1, 2].map(i => (
+          <div key={i} style={{
+            width: 7, height: 7, borderRadius: "50%", background: "#3b82f6",
+            animation: `pulse 1.2s ${i * 0.2}s infinite`,
+          }} />
+        ))}
+      </div>
+      <span style={{ color: "#64748b", fontSize: 13, fontFamily: "sans-serif" }}>{text}</span>
+      <style>{`@keyframes pulse{0%,80%,100%{opacity:.2;transform:scale(0.8)}40%{opacity:1;transform:scale(1)}}`}</style>
+    </div>
+  );
+}
+
+function ErrorMsg({ msg }) {
+  return (
+    <div style={{ background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.3)", borderRadius: 7, padding: "10px 14px", color: "#fca5a5", fontSize: 13, fontFamily: "sans-serif" }}>
+      ⚠ {msg}
+    </div>
+  );
+}
+
+function EmptyState({ text }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "32px 0", gap: 8 }}>
+      <div style={{ fontSize: 32, opacity: 0.15 }}>🫀</div>
+      <p style={{ color: "#334155", fontSize: 12, fontFamily: "sans-serif", textAlign: "center", maxWidth: 280, margin: 0 }}>{text}</p>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<EchoAssistant />);
+</script>
+</body>
+</html>

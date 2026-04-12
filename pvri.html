@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>PedCardSuite — PVRI Calculator</title>
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body, #root { height: 100%; }
+  body {
+    background: #0f1117;
+    -webkit-font-smoothing: antialiased;
+    -webkit-tap-highlight-color: transparent;
+  }
+  input[type=number]::-webkit-inner-spin-button,
+  input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+  input[type=number] { -moz-appearance: textfield; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+<script type="text/babel">
+const { useState, useRef, useCallback } = React;
+/* ═══════════════════════════════════════════════════════
+   LAFARGE TABLE — exact published values
+   VO2 in mL/min/m², indexed by Age (years) and HR (bpm)
+   null = not available at that age/HR combination
+   ═══════════════════════════════════════════════════════ */
+const HR_COLS = [50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160, 170];
+
+const LAFARGE_MALE = {
+  3:  [null, null, null, 155, 159, 163, 167, 171, 175, 178, 182, 186, 190],
+  4:  [null, null, 149, 152, 156, 160, 163, 168, 171, 175, 179, 182, 186],
+  6:  [null, 141, 144, 148, 151, 155, 159, 162, 167, 171, 174, 178, 181],
+  8:  [null, 136, 141, 145, 148, 152, 156, 159, 163, 167, 171, 175, 178],
+  10: [130, 134, 139, 142, 146, 149, 153, 157, 160, 165, 169, 172, 176],
+  12: [128, 132, 136, 140, 144, 147, 151, 155, 158, 162, 167, 170, 174],
+  14: [127, 130, 134, 137, 142, 146, 149, 153, 157, 160, 165, 169, 172],
+  16: [125, 129, 132, 136, 141, 144, 148, 152, 155, 159, 162, 167, null],
+  18: [124, 127, 131, 135, 139, 143, 147, 150, 154, 157, 161, 166, null],
+};
+
+const LAFARGE_FEMALE = {
+  3:  [null, null, null, 150, 153, 157, 161, 165, 169, 172, 176, 180, 183],
+  4:  [null, null, 141, 145, 149, 152, 156, 159, 163, 168, 171, 175, 179],
+  6:  [null, 130, 134, 137, 142, 146, 149, 153, 156, 160, 165, 168, 172],
+  8:  [null, 125, 129, 133, 136, 141, 144, 148, 152, 155, 159, 163, 167],
+  10: [118, 122, 125, 129, 133, 136, 141, 144, 148, 152, 155, 159, 163],
+  12: [115, 119, 122, 126, 130, 133, 137, 141, 145, 149, 152, 156, 160],
+  14: [112, 116, 120, 123, 127, 131, 135, 139, 143, 146, 150, 153, 157],
+  16: [109, 114, 118, 121, 125, 128, 132, 136, 140, 144, 148, 151, null],
+  18: [107, 111, 116, 119, 123, 127, 130, 134, 137, 142, 146, 149, null],
+};
+
+const TABLE_AGES = [3, 4, 6, 8, 10, 12, 14, 16, 18];
+
+function lerp(a, b, t) { return a + (b - a) * t; }
+
+function lookupVO2(sex, ageYears, hr) {
+  if (!hr || !ageYears || ageYears < 3 || hr < 50) return null;
+  const table = sex === "Male" ? LAFARGE_MALE : LAFARGE_FEMALE;
+  const clampAge = Math.max(3, Math.min(18, ageYears));
+  const clampHR = Math.max(50, Math.min(170, hr));
+
+  let aLo = 3, aHi = 3;
+  for (let i = 0; i < TABLE_AGES.length - 1; i++) {
+    if (clampAge >= TABLE_AGES[i] && clampAge <= TABLE_AGES[i + 1]) {
+      aLo = TABLE_AGES[i]; aHi = TABLE_AGES[i + 1]; break;
+    }
+  }
+  if (clampAge >= 18) { aLo = 18; aHi = 18; }
+
+  let hLo = 0, hHi = 0;
+  for (let i = 0; i < HR_COLS.length - 1; i++) {
+    if (clampHR >= HR_COLS[i] && clampHR <= HR_COLS[i + 1]) {
+      hLo = i; hHi = i + 1; break;
+    }
+  }
+  if (clampHR >= 170) { hLo = HR_COLS.length - 1; hHi = hLo; }
+
+  const v00 = table[aLo]?.[hLo], v01 = table[aLo]?.[hHi];
+  const v10 = table[aHi]?.[hLo], v11 = table[aHi]?.[hHi];
+  const vals = [v00, v01, v10, v11].filter(v => v != null);
+  if (vals.length === 0) return null;
+  if (vals.length === 1) return vals[0];
+
+  const tH = HR_COLS[hLo] === HR_COLS[hHi] ? 0 : (clampHR - HR_COLS[hLo]) / (HR_COLS[hHi] - HR_COLS[hLo]);
+  const tA = aLo === aHi ? 0 : (clampAge - aLo) / (aHi - aLo);
+
+  const top = (v00 != null && v01 != null) ? lerp(v00, v01, tH) : (v00 != null ? v00 : v01);
+  const bot = (v10 != null && v11 != null) ? lerp(v10, v11, tH) : (v10 != null ? v10 : v11);
+  if (top != null && bot != null) return lerp(top, bot, tA);
+  return top != null ? top : bot;
+}
+
+function o2c(hb, sat, pao2) {
+  const s = parseFloat(sat), p = parseFloat(pao2) || 0, h = parseFloat(hb);
+  if (isNaN(s) || isNaN(h) || h <= 0) return null;
+  return (1.36 * h * (s / 100) + 0.003 * p) * 10;
+}
+
+function calcBSA(wt, ht) {
+  const w = parseFloat(wt), h = parseFloat(ht);
+  if (!w || !h || w <= 0 || h <= 0) return null;
+  return Math.sqrt((h * w) / 3600);
+}
+
+/* ═══════════════════════════════════════════
+   STYLES — defined once, never recreated
+   ═══════════════════════════════════════════ */
+const S = {
+  row: { display: "flex", alignItems: "center", background: "#fff", borderRadius: 6, border: "1px solid #e0dede", marginBottom: 14, overflow: "hidden", height: 48 },
+  lbl: { minWidth: 115, padding: "0 14px", fontSize: 14.5, fontWeight: 500, color: "#333", display: "flex", alignItems: "center" },
+  bar: { width: 3, height: 26, background: "#c0392b", borderRadius: 1, flexShrink: 0 },
+  inp: { flex: 1, border: "none", outline: "none", padding: "0 14px", fontSize: 14.5, color: "#333", background: "transparent", height: "100%", WebkitAppearance: "none" },
+  sel: { flex: 1, border: "none", outline: "none", padding: "0 10px", fontSize: 14.5, color: "#333", background: "transparent", height: "100%", cursor: "pointer" },
+  olbl: { fontSize: 14.5, fontWeight: 500, color: "#222", marginBottom: 5 },
+  obox: { background: "#e8ecf1", borderRadius: 6, padding: "12px 14px", fontSize: 15, minHeight: 20 },
+  errBox: { padding: "10px 14px", background: "#fdecea", borderRadius: 6, marginBottom: 14, fontSize: 13, color: "#c0392b", fontWeight: 500 },
+  btn: { padding: "12px 28px", borderRadius: 6, border: "none", color: "#fff", fontSize: 15, fontWeight: 600, cursor: "pointer" },
+  note: { padding: "11px 14px", background: "#f0f0f0", borderRadius: 6, fontSize: 11.5, color: "#888", lineHeight: 1.7, marginBottom: 10 },
+};
+
+/* ═══════════════════════════════════════════
+   COMPONENTS — defined OUTSIDE App so React
+   keeps stable identity across re-renders.
+   This is the fix for keyboard dismissal.
+   ═══════════════════════════════════════════ */
+function InputRow({ label, value, onChange, placeholder }) {
+  return (
+    <div style={S.row}>
+      <div style={S.lbl}>{label}</div>
+      <div style={S.bar} />
+      <input
+        type="text"
+        inputMode="decimal"
+        value={value}
+        onChange={e => {
+          const v = e.target.value;
+          if (v === "" || /^-?\d*\.?\d*$/.test(v)) onChange(v);
+        }}
+        placeholder={placeholder || ""}
+        style={S.inp}
+      />
+    </div>
+  );
+}
+
+function SelectRow({ label, value, onChange, options }) {
+  return (
+    <div style={S.row}>
+      <div style={S.lbl}>{label}</div>
+      <select value={value} onChange={e => onChange(e.target.value)} style={S.sel}>
+        {options.map(o => <option key={o} value={o}>{o}</option>)}
+      </select>
+    </div>
+  );
+}
+
+function OutputRow({ label, value }) {
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <div style={S.olbl}>{label}</div>
+      <div style={{ ...S.obox, color: value ? "#111" : "#ccc", fontWeight: value ? 600 : 400 }}>
+        {value || "\u00A0"}
+      </div>
+    </div>
+  );
+}
+
+function SectionTitle({ children, sub }) {
+  return (
+    <div style={{ textAlign: "center", margin: "30px 0 16px" }}>
+      <div style={{ fontSize: 17, fontWeight: 700, color: "#c0392b", letterSpacing: 0.3 }}>{children}</div>
+      {sub && <div style={{ fontSize: 10.5, color: "#aaa", marginTop: 2 }}>{sub}</div>}
+      <div style={{ borderTop: "2px solid #e0dede", marginTop: 10 }} />
+    </div>
+  );
+}
+
+function ActionBtn({ onClick, label, bg }) {
+  return <button onClick={onClick} style={{ ...S.btn, background: bg }}>{label}</button>;
+}
+
+function Badge({ text, level }) {
+  const colors = level === 1
+    ? ["#1e8449", "#eafaf1", "#a9dfbf"]
+    : level === 0
+    ? ["#b7950b", "#fef9e7", "#f9e79f"]
+    : ["#c0392b", "#fdedec", "#f5b7b1"];
+  return (
+    <div style={{
+      padding: "10px 14px", borderRadius: 6, background: colors[1],
+      border: "2px solid " + colors[2], textAlign: "center",
+      marginBottom: 14, fontSize: 13, fontWeight: 700,
+      color: colors[0], letterSpacing: 0.4,
+    }}>
+      {text}
+    </div>
+  );
+}
+
+function VO2Display({ vo2 }) {
+  const active = vo2 != null;
+  return (
+    <div style={{
+      ...S.row,
+      background: active ? "#f0faf4" : "#f5f5f5",
+      borderColor: active ? "#c8e6d0" : "#e0dede",
+    }}>
+      <div style={{ ...S.lbl, color: active ? "#1e8449" : "#999" }}>{"VO\u2082"}</div>
+      <div style={{ ...S.bar, background: active ? "#27ae60" : "#ccc" }} />
+      <div style={{
+        flex: 1, padding: "0 14px", fontSize: 14.5, fontWeight: 600,
+        color: active ? "#1e8449" : "#bbb", display: "flex", alignItems: "center",
+      }}>
+        {active
+          ? <>{vo2.toFixed(1)} <span style={{ fontWeight: 400, color: "#7dcea0", fontSize: 11.5, marginLeft: 6 }}>{"mL/min/m\u00B2 (LaFarge)"}</span></>
+          : <span style={{ fontWeight: 400, fontSize: 13 }}>{"Enter Age (\u22653) & HR (\u226550)"}</span>
+        }
+      </div>
+    </div>
+  );
+}
+
+function BSADisplay({ wt, ht }) {
+  const b = calcBSA(wt, ht);
+  const active = b != null;
+  return (
+    <div style={{
+      ...S.row,
+      background: active ? "#eef6fb" : "#f5f5f5",
+      borderColor: active ? "#b8d8ef" : "#e0dede",
+    }}>
+      <div style={{ ...S.lbl, color: active ? "#2471a3" : "#999" }}>BSA</div>
+      <div style={{ ...S.bar, background: active ? "#2980b9" : "#ccc" }} />
+      <div style={{
+        flex: 1, padding: "0 14px", fontSize: 14.5, fontWeight: 600,
+        color: active ? "#2471a3" : "#bbb", display: "flex", alignItems: "center",
+      }}>
+        {active
+          ? <>{b.toFixed(3)} <span style={{ fontWeight: 400, color: "#85c1e9", fontSize: 11.5, marginLeft: 5 }}>{"m\u00B2 (Mosteller)"}</span></>
+          : <span style={{ fontWeight: 400, fontSize: 13 }}>Enter Wt & Ht</span>
+        }
+      </div>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════
+   MAIN APP
+   ═══════════════════════════════════════════ */
+function App() {
+  const [sex, setSex] = useState("Male");
+  const [age, setAge] = useState("");
+  const [hr, setHr] = useState("");
+  const [hb, setHb] = useState("");
+  const [pvS, setPvS] = useState("");
+  const [pvP, setPvP] = useState("");
+  const [paS, setPaS] = useState("");
+  const [paP, setPaP] = useState("");
+  const [aoS, setAoS] = useState("");
+  const [aoP, setAoP] = useState("");
+  const [mvS, setMvS] = useState("");
+  const [mvP, setMvP] = useState("");
+  const [mPA, setMPA] = useState("");
+  const [mLA, setMLA] = useState("");
+  const [mAO, setMAO] = useState("");
+  const [mRA, setMRA] = useState("");
+  const [res, setRes] = useState(null);
+  const [err, setErr] = useState("");
+
+  const [mcRpa, setMcRpa] = useState("");
+  const [mcLpa, setMcLpa] = useState("");
+  const [mcDao, setMcDao] = useState("");
+  const [mcRes, setMcRes] = useState(null);
+
+  const [nkRpa, setNkRpa] = useState("");
+  const [nkLpa, setNkLpa] = useState("");
+  const [nkWt, setNkWt] = useState("");
+  const [nkHt, setNkHt] = useState("");
+  const [nkRes, setNkRes] = useState(null);
+
+  const resRef = useRef(null);
+
+  const ageNum = parseFloat(age) || 0;
+  const hrNum = parseFloat(hr) || 0;
+  const vo2 = (ageNum >= 3 && hrNum >= 50) ? lookupVO2(sex, ageNum, hrNum) : null;
+
+  const calcPVRI = useCallback(() => {
+    if (ageNum < 3) { setErr("Age must be 3 years or more for LaFarge table"); setRes(null); return; }
+    if (hrNum < 50) { setErr("Heart Rate required (50 bpm or more)"); setRes(null); return; }
+    if (!hb) { setErr("Hb required"); setRes(null); return; }
+    if (!pvS) { setErr("PVSat required"); setRes(null); return; }
+    if (!paS) { setErr("PASat required"); setRes(null); return; }
+    if (!aoS) { setErr("AORTASat required"); setRes(null); return; }
+    if (!mvS) { setErr("MVSat required"); setRes(null); return; }
+    if (!mPA) { setErr("meanPAp required"); setRes(null); return; }
+    if (!mLA) { setErr("meanLAp required"); setRes(null); return; }
+    if (!mAO) { setErr("meanAOp required"); setRes(null); return; }
+    if (!mRA) { setErr("meanRAp required"); setRes(null); return; }
+
+    const PA = parseFloat(mPA), LA = parseFloat(mLA);
+    const AO = parseFloat(mAO), RA = parseFloat(mRA);
+    if (LA >= PA) { setErr("meanLAp must be less than meanPAp"); setRes(null); return; }
+
+    const cpv = o2c(hb, pvS, pvP), cpa = o2c(hb, paS, paP);
+    const cao = o2c(hb, aoS, aoP), cmv = o2c(hb, mvS, mvP);
+    if (!cpv || !cpa || !cao || !cmv) { setErr("Check Sat / Hb values"); setRes(null); return; }
+
+    const dP = cpv - cpa, dS = cao - cmv;
+    if (dP <= 0) { setErr("PV O2 content must exceed PA"); setRes(null); return; }
+    if (dS <= 0) { setErr("Ao O2 content must exceed MV"); setRes(null); return; }
+
+    const v = lookupVO2(sex, ageNum, hrNum);
+    if (!v) { setErr("VO2 lookup failed - check Age & HR"); setRes(null); return; }
+
+    const qp = v / dP, qs = v / dS;
+    const pvri = (PA - LA) / qp, svri = (AO - RA) / qs;
+
+    setErr("");
+    setRes({
+      qp: qp.toFixed(2), qs: qs.toFixed(2), qpqs: (qp / qs).toFixed(2),
+      pvr: pvri.toFixed(2), svr: svri.toFixed(2), pvrsvr: (pvri / svri).toFixed(3),
+    });
+    setTimeout(() => {
+      resRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 200);
+  }, [sex, ageNum, hrNum, hb, pvS, pvP, paS, paP, aoS, aoP, mvS, mvP, mPA, mLA, mAO, mRA]);
+
+  const resetPVRI = () => {
+    setSex("Male"); setAge(""); setHr(""); setHb("");
+    setPvS(""); setPvP(""); setPaS(""); setPaP("");
+    setAoS(""); setAoP(""); setMvS(""); setMvP("");
+    setMPA(""); setMLA(""); setMAO(""); setMRA("");
+    setRes(null); setErr("");
+  };
+
+  const calcMcGoon = () => {
+    const r = parseFloat(mcRpa), l = parseFloat(mcLpa), d = parseFloat(mcDao);
+    if (!r || !l || !d || d === 0) return;
+    const ratio = (r + l) / d;
+    const lv = ratio >= 1.8 ? 1 : ratio >= 1.2 ? 0 : -1;
+    const interp = ratio >= 1.8 ? "Normal (>= 1.8)" : ratio >= 1.5 ? "Borderline (1.5 - 1.8)" : ratio >= 1.2 ? "Low (1.2 - 1.5)" : "Inoperable (< 1.2)";
+    setMcRes({ ratio: ratio.toFixed(2), interp, lv });
+  };
+
+  const calcNakata = () => {
+    const r = parseFloat(nkRpa), l = parseFloat(nkLpa), b = calcBSA(nkWt, nkHt);
+    if (!r || !l || !b) return;
+    const aR = Math.PI * (r / 2) * (r / 2), aL = Math.PI * (l / 2) * (l / 2);
+    const idx = (aR + aL) / b;
+    const lv = idx >= 330 ? 1 : idx >= 150 ? 0 : -1;
+    const interp = idx >= 330 ? "Normal (>= 330)" : idx >= 150 ? "Borderline (150 - 330)" : "Inadequate (< 150)";
+    setNkRes({ idx: idx.toFixed(0), aR: aR.toFixed(1), aL: aL.toFixed(1), bsa: b.toFixed(3), interp, lv });
+  };
+
+  const pvBadge = res ? (() => {
+    const p = parseFloat(res.pvr), r = parseFloat(res.pvrsvr);
+    if (p < 6 && r < 0.3) return { t: "OPERABLE", lv: 1 };
+    if (p >= 8) return { t: "INOPERABLE", lv: -1 };
+    if (p >= 6) return { t: "BORDERLINE - AVT NEEDED", lv: 0 };
+    if (r >= 0.3) return { t: "ELEVATED Rp:Rs", lv: 0 };
+    return null;
+  })() : null;
+
+  return (
+    <div style={{ minHeight: "100vh", background: "#faf7f8" }}>
+      <div style={{ maxWidth: 500, margin: "0 auto", padding: "14px 18px 60px" }}>
+
+        <div style={{ textAlign: "center", marginBottom: 18, paddingTop: 4 }}>
+          <div style={{ fontSize: 20, fontWeight: 700, color: "#c0392b" }}>PVRICalculator</div>
+          <div style={{ fontSize: 10.5, color: "#aaa", marginTop: 2 }}>Pediatric Fick Hemodynamics - Offline - LaFarge Table</div>
+        </div>
+
+        <SelectRow label="Gender" value={sex} onChange={setSex} options={["Male", "Female"]} />
+        <InputRow label="Age" value={age} onChange={setAge} placeholder="years (3-18)" />
+        <InputRow label="Heart Rate" value={hr} onChange={setHr} placeholder="bpm (50-170)" />
+        <VO2Display vo2={vo2} />
+        <InputRow label="Hb" value={hb} onChange={setHb} placeholder="g/dL" />
+        <InputRow label="PVSat" value={pvS} onChange={setPvS} placeholder="%" />
+        <InputRow label="PVPaO2" value={pvP} onChange={setPvP} placeholder="mmHg" />
+        <InputRow label="PASat" value={paS} onChange={setPaS} placeholder="%" />
+        <InputRow label="PAPaO2" value={paP} onChange={setPaP} placeholder="mmHg" />
+        <InputRow label="AORTASat" value={aoS} onChange={setAoS} placeholder="%" />
+        <InputRow label="AORTAPaO2" value={aoP} onChange={setAoP} placeholder="mmHg" />
+        <InputRow label="MVSat" value={mvS} onChange={setMvS} placeholder="%" />
+        <InputRow label="MVPaO2" value={mvP} onChange={setMvP} placeholder="mmHg" />
+        <InputRow label="meanPAp" value={mPA} onChange={setMPA} placeholder="mmHg" />
+        <InputRow label="meanLAp" value={mLA} onChange={setMLA} placeholder="mmHg" />
+        <InputRow label="meanAOp" value={mAO} onChange={setMAO} placeholder="mmHg" />
+        <InputRow label="meanRAp" value={mRA} onChange={setMRA} placeholder="mmHg" />
+
+        {err && <div style={S.errBox}>{err}</div>}
+
+        <div style={{ display: "flex", gap: 12, marginBottom: 16 }}>
+          <ActionBtn onClick={calcPVRI} label="Calculate" bg="#2980d9" />
+          <ActionBtn onClick={resetPVRI} label="Reset" bg="#7f8c8d" />
+        </div>
+
+        <div style={{ borderTop: "2px solid #ddd", margin: "6px 0 18px" }} />
+
+        <div ref={resRef}>
+          <OutputRow label={"Qp (L/min/m\u00B2)"} value={res?.qp} />
+          <OutputRow label={"Qs (L/min/m\u00B2)"} value={res?.qs} />
+          <OutputRow label="Qp/Qs" value={res?.qpqs} />
+          <OutputRow label={"PVR (WU\u00B7m\u00B2)"} value={res?.pvr} />
+          <OutputRow label={"SVR (WU\u00B7m\u00B2)"} value={res?.svr} />
+          <OutputRow label="PVR/SVR" value={res?.pvrsvr} />
+          {pvBadge && <Badge text={pvBadge.t} level={pvBadge.lv} />}
+        </div>
+
+        {/* ── McGOON ── */}
+        <SectionTitle sub="(RPA + LPA diameter) / Descending Aorta diameter">McGoon Ratio</SectionTitle>
+        <InputRow label="RPA dia" value={mcRpa} onChange={setMcRpa} placeholder="mm" />
+        <InputRow label="LPA dia" value={mcLpa} onChange={setMcLpa} placeholder="mm" />
+        <InputRow label="Desc Ao dia" value={mcDao} onChange={setMcDao} placeholder="mm" />
+        <div style={{ display: "flex", gap: 12, marginBottom: 16 }}>
+          <ActionBtn onClick={calcMcGoon} label="Calculate" bg="#2980d9" />
+          <ActionBtn onClick={() => { setMcRpa(""); setMcLpa(""); setMcDao(""); setMcRes(null); }} label="Reset" bg="#7f8c8d" />
+        </div>
+        <OutputRow label="McGoon Ratio" value={mcRes?.ratio} />
+        {mcRes && <Badge text={mcRes.interp} level={mcRes.lv} />}
+        <div style={S.note}>
+          <b>McGoon</b> = (RPA + LPA) / Desc Aorta<br />
+          {">=1.8 Normal \u2022 1.5-1.8 Borderline \u2022 <1.2 Inoperable"}<br />
+          <span style={{ fontSize: 10, color: "#aaa" }}>Diameters at narrowest point on angiogram</span>
+        </div>
+
+        {/* ── NAKATA ── */}
+        <SectionTitle sub={"(RPA area + LPA area) / BSA"}>Nakata Index</SectionTitle>
+        <InputRow label="RPA dia" value={nkRpa} onChange={setNkRpa} placeholder="mm" />
+        <InputRow label="LPA dia" value={nkLpa} onChange={setNkLpa} placeholder="mm" />
+        <InputRow label="Weight" value={nkWt} onChange={setNkWt} placeholder="kg" />
+        <InputRow label="Height" value={nkHt} onChange={setNkHt} placeholder="cm" />
+        <BSADisplay wt={nkWt} ht={nkHt} />
+        <div style={{ display: "flex", gap: 12, marginBottom: 16 }}>
+          <ActionBtn onClick={calcNakata} label="Calculate" bg="#2980d9" />
+          <ActionBtn onClick={() => { setNkRpa(""); setNkLpa(""); setNkWt(""); setNkHt(""); setNkRes(null); }} label="Reset" bg="#7f8c8d" />
+        </div>
+        <OutputRow label={"Nakata Index (mm\u00B2/m\u00B2)"} value={nkRes?.idx} />
+        {nkRes && (
+          <>
+            <div style={{ display: "flex", gap: 10, marginBottom: 4 }}>
+              <div style={{ flex: 1 }}><OutputRow label={"RPA Area (mm\u00B2)"} value={nkRes.aR} /></div>
+              <div style={{ flex: 1 }}><OutputRow label={"LPA Area (mm\u00B2)"} value={nkRes.aL} /></div>
+            </div>
+            <Badge text={nkRes.interp} level={nkRes.lv} />
+          </>
+        )}
+        <div style={S.note}>
+          <b>Nakata</b> = (RPA area + LPA area) / BSA<br />
+          {"Area = \u03C0 \u00D7 (d/2)\u00B2"}<br />
+          {">=330 Normal \u2022 150-330 Borderline \u2022 <150 Inadequate"}<br />
+          <span style={{ fontSize: 10, color: "#aaa" }}>Diameters just proximal to first branch</span>
+        </div>
+
+        {/* ── Footer ── */}
+        <div style={{ ...S.note, marginTop: 22 }}>
+          <b>Units</b>: Sat % | PaO2 mmHg | Hb g/dL | Pressures mmHg | Diameters mm<br />
+          <b>VO2</b>: LaFarge-Miettinen table (age 3-18, HR 50-170)<br />
+          <b>O2 content</b> = (1.36 x Hb x Sat + 0.003 x PaO2) x 10 mL/L<br />
+          {"Flows indexed (L/min/m\u00B2) | Resistances indexed (WU\u00B7m\u00B2)"}
+        </div>
+
+        <p style={{ textAlign: "center", fontSize: 10, color: "#bbb", marginTop: 10 }}>
+          Fully offline - No AI - No network - Clinical decision support only
+        </p>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>

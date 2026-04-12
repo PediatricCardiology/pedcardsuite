@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>PedCardSuite — Drug Dosing</title>
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body, #root { height: 100%; }
+  body {
+    background: #0f1117;
+    -webkit-font-smoothing: antialiased;
+    -webkit-tap-highlight-color: transparent;
+  }
+  input[type=number]::-webkit-inner-spin-button,
+  input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+  input[type=number] { -moz-appearance: textfield; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+<script type="text/babel">
+const { useState, useMemo, useEffect, useRef } = React;
+function rML(v){if(v<=0)return"0";if(v<1)return(Math.round(v*10)/10).toFixed(1);if(v<5)return(Math.round(v*4)/4).toFixed(1);return(Math.round(v*2)/2).toFixed(1)}
+function fmt(n){if(n>=10000)return Math.round(n).toLocaleString("en-IN");if(n>=100)return+n.toFixed(0)+"";if(n>=10)return+n.toFixed(1)+"";if(n>=1)return+n.toFixed(1)+"";return+n.toFixed(2)+""}
+function calcBSA(w,h){return(w>0&&h>0)?Math.sqrt((h*w)/3600):0}
+function cMg(d,w,b){if(d.type==="fixed")return d.fixed!=null?{lo:d.fixed,u:d.u}:null;if(d.type==="perKg"&&w>0)return{lo:d.val*w,hi:d.valHi?d.valHi*w:null,u:d.u};if(d.type==="perBSA"&&b>0)return{lo:d.val*b,u:d.u};if(d.type==="infusion")return{lo:d.val,hi:d.valHi,u:d.u,isR:1};return null}
+function mS(r){if(!r)return"—";if(r.isR)return r.hi?`${r.lo}–${r.hi} ${r.u}`:`${r.lo} ${r.u}`;return r.hi?`${fmt(r.lo)}–${fmt(r.hi)} ${r.u}`:`${fmt(r.lo)} ${r.u}`}
+function mL(r,c){if(!r||!c||r.isR)return null;const l=r.lo/c,h=r.hi?r.hi/c:null;return h?`${rML(l)}–${rML(h)} mL`:`${rML(l)} mL`}
+function rT(ts,mg){if(!ts||!mg||mg<=0||typeof ts[0]!=="number")return null;let b=ts[0];for(const t of[...ts].sort((a,c)=>a-c))if(t<=mg*1.15)b=t;return b}
+
+// ── PRACTICAL TAB FRACTION ENGINE ──
+// Practical fracs: prefer ¼,½,¾,1,1½,2 over ⅓,⅔ (penalty 0.08 for impractical)
+const FRACS=[
+  {v:0.25,l:"¼ tab",p:0},{v:1/3,l:"⅓ tab",p:0.08},{v:0.5,l:"½ tab",p:0},
+  {v:2/3,l:"⅔ tab",p:0.08},{v:0.75,l:"¾ tab",p:0.02},{v:1,l:"1 tab",p:0},
+  {v:1.25,l:"1¼ tabs",p:0.02},{v:1.5,l:"1½ tabs",p:0},{v:2,l:"2 tabs",p:0},{v:3,l:"3 tabs",p:0}
+];
+function bestTab(targetMg,tabs){
+  if(!tabs||!targetMg||targetMg<=0)return null;
+  const numTabs=tabs.filter(t=>typeof t==="number").sort((a,b)=>a-b);
+  if(!numTabs.length)return null;
+  let best=null;
+  for(const tab of numTabs){
+    for(const fr of FRACS){
+      const actual=tab*fr.v;const rawDiff=Math.abs(actual-targetMg)/targetMg;
+      const score=rawDiff+(fr.p||0); // penalize impractical fractions
+      if(rawDiff<0.3&&(!best||score<best.score))
+        best={tab,frac:fr,actual,diff:rawDiff,score,label:`${fr.l}`,str:`${tab}`};
+    }
+  }
+  return best;
+}
+
+/*
+ rx object per drug:
+  .dose = mg/kg (or mcg/kg) PER SINGLE DOSE (already divided by freq)
+  .unit = "mg"|"mcg"|"mL"|...
+  .freq = frequency for Rx
+  .tn = trade name, .form = Tab|Syp|Drops|Inj|Respules
+  .str = tab strength, .dil = dilution instructions for <10kg
+  .tabTn/.tabStr = alt trade/strength for ≥10kg
+  .rxLine = pre-built Rx line (fetal etc)
+  .fixed = fixed dose not per kg
+  .wholeTab = pick nearest whole tab (aspirin ARF)
+  .adultMax = max single dose in mg for >40kg (adult cap)
+  .adultLine = override Rx line for >40kg adults
+  .note = extra instruction
+  .sypConc = syrup concentration for mL calc (overrides prep.conc)
+*/
+
+const DB={
+"anticoag":{title:"Anticoagulants",icon:"🩸",drugs:[
+  {n:"Aspirin (antiplatelet)",brands:"Ecosprin",prep:{type:"other"},perDay:"3-5mg/kg/day",mxD:"75mg",mxDay:"150mg",d:[{lb:"PO",val:3,valHi:5,u:"mg",type:"perKg",fr:"OD"}],tabs:[75,150],w:"Reye risk.",
+    rx:{tn:"Ecosprin",form:"Tab",str:"75mg",dose:5,unit:"mg",freq:"OD",adultMax:75}},
+  {n:"Clopidogrel",brands:"Clopilet",prep:{type:"dilute",tabBrand:"Clopilet 75mg",tab:75,vol:7.5,conc:10,concU:"mg/mL"},perDay:"1mg/kg/day",mxD:"75mg",mxDay:"75mg",d:[{lb:"PO",val:1,u:"mg",type:"perKg",fr:"OD"}],tabs:[75],w:"Post-stent.",
+    rx:{tn:"Clopilet",form:"Tab",str:"75mg",dose:1,unit:"mg",freq:"OD",adultMax:75,dil:"Crush Clopilet 75mg in 7.5mL NS→10mg/mL"}},
+  {n:"Enoxaparin",brands:"Clexane",prep:{type:"inj"},iv:true,perDay:"2mg/kg/day",mxD:"anti-Xa",mxDay:"anti-Xa",d:[{lb:"<2mo",val:1.5,u:"mg",type:"perKg",fr:"BD SC"},{lb:"≥2mo",val:1,u:"mg",type:"perKg",fr:"BD SC"}],tabs:null,w:"Anti-Xa 4-6h.",
+    rx:{tn:"Clexane",form:"Inj",dose:1,unit:"mg",freq:"BD SC"}},
+  {n:"UFH",brands:"Heparin",prep:{type:"inj",note:"Dilute 50U/mL NS"},iv:true,perDay:"Inf",mxD:"aPTT",mxDay:"aPTT",d:[{lb:"Load",val:75,u:"U",type:"perKg",fr:"Over 10min"},{lb:"Inf",val:20,u:"U/kg/h",type:"infusion",fr:"CONTINUOUS"}],tabs:null,w:"Protamine.",
+    rx:{tn:"Heparin",form:"Inj",isInf:true,rxLine:"Inj Heparin infusion 20 U/kg/h — titrate to aPTT 60-85s"}},
+  {n:"Warfarin",brands:"Warf, Acitrom",prep:{type:"dilute",tabBrand:"Warf 1mg",tab:1,vol:5,conc:0.2,concU:"mg/mL"},perDay:"0.1-0.2mg/kg/day",mxD:"5mg",mxDay:"INR",d:[{lb:"Start",val:0.1,valHi:0.2,u:"mg",type:"perKg",fr:"OD"}],tabs:[1,2,5],w:"INR 2-3.",
+    rx:{tn:"Warf",form:"Tab",str:"1mg",dose:0.1,unit:"mg",freq:"OD",adultMax:5,dil:"Crush Warf 1mg in 5mL NS→0.2mg/mL"}},
+]},
+"arf":{title:"Acute Rheumatic Carditis",icon:"🦠",drugs:[
+  {n:"Aspirin (anti-inflam)",brands:"Ecosprin",prep:{type:"other"},perDay:"50-100mg/kg/day QDS",mxD:"1g",mxDay:"4g",d:[{lb:"Anti-inflam",val:50,valHi:100,u:"mg",type:"perKg",fr:"QDS×2-6wk"}],tabs:[75,150,325],w:"PPI. 12wk.",
+    rx:{tn:"Ecosprin",form:"Tab",str:"75/150/325mg",dose:12.5,unit:"mg",freq:"QDS",wholeTab:true,note:"~50mg/kg/day. PPI cover. Taper after 2-6wk.",adultMax:1000}},
+  {n:"Benz Pen G",brands:"Penidure LA",prep:{type:"inj"},perDay:"q3-4wk",mxD:"1.2MU",mxDay:"1.2MU",d:[{lb:"<27kg",type:"fixed",fixed:600000,u:"IU",fr:"q3-4wk IM"},{lb:"≥27kg",type:"fixed",fixed:1200000,u:"IU",fr:"q3-4wk IM"}],tabs:null,w:"ANAPHYLAXIS KIT.",
+    rx:{tn:"Penidure LA",form:"Inj",freq:"q3wk IM",note:"<27kg: 6L IU; ≥27kg: 12L IU"}},
+  {n:"Carbamazepine",brands:"Tegrital",prep:{type:"liquid",brand:"Tegrital susp",conc:20,concU:"mg/mL"},perDay:"5-10mg/kg/day",mxD:"200mg",mxDay:"20mg/kg",d:[{lb:"Chorea",val:5,valHi:10,u:"mg",type:"perKg",fr:"BD–TDS"}],tabs:[100,200],w:"Chorea. CBC,LFT.",
+    rx:{tn:"Tegrital",form:"Syp",str:"100mg/5mL",tabStr:"100mg",dose:2.5,unit:"mg",freq:"BD",note:"For Sydenham chorea"}},
+  {n:"IV Methylpred",brands:"Solu-Medrol",prep:{type:"inj"},iv:true,perDay:"30mg/kg×3d",mxD:"1g",mxDay:"1g",d:[{lb:"Pulse",val:30,u:"mg",type:"perKg",fr:"OD×3d"}],tabs:null,w:"Life-threatening.",
+    rx:{tn:"Solu-Medrol",form:"Inj",dose:30,unit:"mg",freq:"OD × 3 days",adultMax:1000}},
+  {n:"Naproxen",brands:"Naprosyn",prep:{type:"liquid",brand:"Naprosyn susp",conc:25,concU:"mg/mL"},perDay:"10-20mg/kg/day",mxD:"500mg",mxDay:"1000mg",d:[{lb:"PO",val:10,valHi:20,u:"mg",type:"perKg",fr:"BD"}],tabs:[250,500],w:"First-line.",
+    rx:{tn:"Naprosyn",form:"Syp",str:"125mg/5mL",tabStr:"250mg",dose:5,unit:"mg",freq:"BD",adultMax:500}},
+  {n:"Prednisolone",brands:"Omnacortil",prep:{type:"liquid",brand:"Omnacortil syrup",conc:3,concU:"mg/mL"},perDay:"1-2mg/kg/day",mxD:"40mg",mxDay:"80mg",d:[{lb:"Carditis",val:1,valHi:2,u:"mg",type:"perKg",fr:"OD–BD×2-3wk"}],tabs:[5,10,20],w:"Overlap aspirin.",
+    rx:{tn:"Omnacortil",form:"Syp",str:"15mg/5mL",tabStr:"5/10/20mg",dose:1,unit:"mg",freq:"OD",adultMax:60,note:"×2-3wk then taper"}},
+]},
+"bronch":{title:"Bronchodilators",icon:"💨",drugs:[
+  {n:"Aminophylline",brands:"Generic",prep:{type:"inj",note:"25mg/mL in D5W"},iv:true,perDay:"12-24mg/kg",mxD:"500mg",mxDay:"Lvl5-15",d:[{lb:"Load",val:5,u:"mg",type:"perKg",fr:"Over 20-30min"},{lb:"Maint",val:0.5,valHi:1,u:"mg/kg/h",type:"infusion",fr:"CONTINUOUS"}],tabs:null,w:"Seizures.",
+    rx:{tn:"Aminophylline",form:"Inj",isInf:true,rxLine:"Inj Aminophylline — Load 5mg/kg over 20min, then 0.5mg/kg/h"}},
+  {n:"Budesonide neb",brands:"Budecort",prep:{type:"inj"},perDay:"1-2mg/day",mxD:"1mg",mxDay:"2mg",d:[{lb:"Neb",type:"fixed",fixed:1,u:"mg",fr:"BD"}],tabs:null,w:"Stridor.",
+    rx:{tn:"Budecort",form:"Respules",str:"1mg",fixed:1,unit:"mg",freq:"BD"}},
+  {n:"Ipratropium",brands:"Ipravent",prep:{type:"inj"},combos:"Duolin-LS (Levo+Ipra)",perDay:"PRN",mxD:"500mcg",mxDay:"PRN",d:[{lb:"<20kg",type:"fixed",fixed:250,u:"mcg",fr:"Q6-8h"},{lb:">20kg",type:"fixed",fixed:500,u:"mcg",fr:"Q6-8h"}],tabs:null,w:"Additive.",
+    rx:{tn:"Duolin-LS",form:"Respules",freq:"Q6-8h neb"}},
+  {n:"Levosalbutamol neb",brands:"Levolin",prep:{type:"inj",note:"Levolin respules 0.63/1.25mg"},combos:"Duolin-LS",perDay:"PRN",mxD:"1.25mg",mxDay:"PRN",d:[{lb:"Neb",val:0.075,u:"mg",type:"perKg",fr:"Q20min×3; Q4-6h"}],tabs:null,w:"Or Duolin-LS combo.",
+    rx:{tn:"Levolin",form:"Respules",str:"1.25mg",dose:0.075,unit:"mg",freq:"Q4-6h neb"}},
+  {n:"Neb Epinephrine",brands:"Adrenaline 1:1000",prep:{type:"inj"},perDay:"PRN",mxD:"5mL",mxDay:"PRN",d:[{lb:"Neb",val:0.5,u:"mL",type:"perKg",fr:"PRN q1-2h"}],tabs:null,w:"Croup. Observe 2-4h.",
+    rx:{tn:"Adrenaline",form:"Neb",dose:0.5,unit:"mL",freq:"PRN q1-2h"}},
+]},
+"shock":{title:"Cardiogenic Shock",icon:"🚨",drugs:[
+  {n:"Dobutamine",brands:"Dobutrex",prep:{type:"inj",note:"6×wt mg in 100mL D5W→1mL/h=1mcg/kg/min"},iv:true,perDay:"Inf",mxD:"20",mxDay:"Cont",d:[{lb:"Inf",val:5,valHi:20,u:"mcg/kg/min",type:"infusion",fr:"CONTINUOUS"}],tabs:null,w:"Beta1.",rx:{isInf:true,rxLine:"Inj Dobutamine 5mcg/kg/min — titrate (6×wt mg in 100mL D5W)"}},
+  {n:"Dopamine",brands:"Dopamine",prep:{type:"inj",note:"6×wt mg in 100mL D5W→1mL/h=1mcg/kg/min"},iv:true,perDay:"Inf",mxD:"20",mxDay:"Cont",d:[{lb:"Inf",val:5,valHi:20,u:"mcg/kg/min",type:"infusion",fr:"CONTINUOUS"}],tabs:null,w:"Phentolamine.",rx:{isInf:true,rxLine:"Inj Dopamine 5mcg/kg/min — titrate (6×wt mg in 100mL D5W)"}},
+  {n:"Epinephrine",brands:"Adrenaline",prep:{type:"inj",note:"0.6×wt mg in 100mL D5W→0.1mcg/kg/min"},iv:true,perDay:"Inf",mxD:"1",mxDay:"Cont",d:[{lb:"Inf",val:0.05,valHi:1,u:"mcg/kg/min",type:"infusion",fr:"CONTINUOUS"}],tabs:null,w:"Arrhythmogenic.",rx:{isInf:true,rxLine:"Inj Adrenaline 0.05mcg/kg/min — titrate (0.6×wt mg in 100mL D5W)"}},
+  {n:"Hydrocortisone",brands:"Efcorlin",prep:{type:"inj"},iv:true,perDay:"2mg/kg/day",mxD:"100mg",mxDay:"200mg",d:[{lb:"Stress",val:2,u:"mg",type:"perKg",fr:"BOLUS"},{lb:"Maint",val:0.5,u:"mg",type:"perKg",fr:"Q6h"}],tabs:null,w:"Cortisol first.",rx:{tn:"Hydrocortisone",form:"Inj",dose:2,unit:"mg",freq:"STAT then 0.5mg/kg Q6h",adultMax:100}},
+  {n:"Milrinone",brands:"Milrinone",prep:{type:"inj",note:"0.6×wt mg in 100mL D5W→0.1mcg/kg/min"},iv:true,perDay:"Inf",mxD:"0.75",mxDay:"Cont",d:[{lb:"Inf",val:0.25,valHi:0.75,u:"mcg/kg/min",type:"infusion",fr:"CONTINUOUS no load"}],tabs:null,w:"NO load.",rx:{isInf:true,rxLine:"Inj Milrinone 0.25mcg/kg/min — NO loading (0.6×wt mg in 100mL D5W)"}},
+  {n:"Norepinephrine",brands:"Noradrenaline",prep:{type:"inj",note:"0.6×wt mg in 100mL D5W. CENTRAL."},iv:true,perDay:"Inf",mxD:"2",mxDay:"Cont",d:[{lb:"Inf",val:0.05,valHi:2,u:"mcg/kg/min",type:"infusion",fr:"CONTINUOUS"}],tabs:null,w:"Central line.",rx:{isInf:true,rxLine:"Inj Noradrenaline 0.05mcg/kg/min — CENTRAL LINE (0.6×wt mg in 100mL D5W)"}},
+]},
+"fbrady":{title:"Fetal Bradycardia",icon:"🤰",isFetal:true,drugs:[
+  {n:"Maternal Dexa",brands:"Dexona",prep:null,perDay:"Mat",mxD:"8mg",mxDay:"8mg",d:[{lb:"M",type:"fixed",fixed:null,u:"",fr:"4mg/day PO"}],tabs:null,w:"Anti-SSA.",rx:{rxLine:"Tab Dexona 4mg — 1 tab OD"}},
+  {n:"Maternal HCQ",brands:"HCQS 200",prep:null,perDay:"Mat",mxD:"200mg",mxDay:"400mg",d:[{lb:"M",type:"fixed",fixed:400,u:"mg/d",fr:"200mg BD"}],tabs:null,w:"PATCH.",rx:{rxLine:"Tab HCQS 200mg — 1 tab BD"}},
+  {n:"Maternal IVIG",brands:"Various",prep:null,perDay:"Mat",mxD:"1g/kg",mxDay:"1g/kg",d:[{lb:"M",type:"fixed",fixed:null,u:"",fr:"1g/kg q2wk"}],tabs:null,w:"With dexa.",rx:{rxLine:"Inj IVIG 1g/kg IV q2 weekly"}},
+  {n:"Maternal Terbutaline",brands:"Bricanyl",prep:null,perDay:"Mat",mxD:"5mg",mxDay:"20mg",d:[{lb:"M",type:"fixed",fixed:null,u:"",fr:"2.5mg TDS"}],tabs:null,w:"↑Fetal HR.",rx:{rxLine:"Tab Bricanyl 2.5mg — 1 tab TDS"}},
+]},
+"fsvt":{title:"Fetal SVT",icon:"🤰",isFetal:true,drugs:[
+  {n:"Mat Amiodarone",brands:"Cordarone",prep:null,perDay:"Mat",mxD:"",mxDay:"600mg",d:[{lb:"M",type:"fixed",fixed:null,u:"",fr:"200mg TDS"}],tabs:null,w:"Last resort.",rx:{rxLine:"Tab Cordarone 200mg — 1 tab TDS (LAST RESORT)"}},
+  {n:"Mat Digoxin",brands:"Digoxin",prep:null,perDay:"Mat",mxD:"",mxDay:"Lvl<2.5",d:[{lb:"M",type:"fixed",fixed:null,u:"",fr:"0.25mg BD"}],tabs:null,w:"First-line.",rx:{rxLine:"Tab Digoxin 0.25mg — 1 tab BD (target level 1.5-2.0)"}},
+  {n:"Mat Flecainide",brands:"Limited India",prep:null,perDay:"Mat",mxD:"300mg",mxDay:"600mg",d:[{lb:"M",type:"fixed",fixed:null,u:"",fr:"100mg BD"}],tabs:null,w:"Short-VA SVT.",rx:{rxLine:"Tab Flecainide 100mg — 1 tab BD"}},
+  {n:"Mat Sotalol",brands:"Sotagard",prep:null,perDay:"Mat",mxD:"160mg",mxDay:"480mg",d:[{lb:"M",type:"fixed",fixed:null,u:"",fr:"80mg BD"}],tabs:null,w:"Flutter.",rx:{rxLine:"Tab Sotagard 80mg — 1 tab BD (admit QTc)"}},
+]},
+"hf":{title:"Heart Failure",icon:"❤️",drugs:[
+  {n:"Calcium",brands:"Shelcal",prep:{type:"liquid",brand:"Shelcal susp",conc:50,concU:"mg/mL Ca"},perDay:"25-50mg/kg/day",mxD:"500mg",mxDay:"1000mg",d:[{lb:"PO",val:25,valHi:50,u:"mg",type:"perKg",fr:"BD–TDS"}],tabs:null,w:"With furo. Sep iron.",
+    rx:{tn:"Shelcal",form:"Syp",str:"50mg/mL",sypConc:50,dose:12.5,unit:"mg",freq:"BD",note:"elemental Ca",forceML:true,tabSwitch:20,tabLine:"Tab Shelcal 500mg — ½ tab BD"}},
+  {n:"Carvedilol",brands:"Cardivas",prep:{type:"dilute",tabBrand:"Cardivas 3.125mg",tab:3.125,vol:3,conc:1,concU:"≈1mg/mL"},perDay:"0.1-1mg/kg/day",mxD:"25mg",mxDay:"50mg",d:[{lb:"Start",val:0.05,u:"mg",type:"perKg",fr:"BD"},{lb:"Target",val:0.2,valHi:0.4,u:"mg",type:"perKg",fr:"BD"}],tabs:[3.125,6.25,12.5,25],w:"NOT acute decomp.",
+    rx:{tn:"Cardivas",form:"Tab",str:"3.125mg",dose:0.05,unit:"mg",freq:"BD",adultMax:25,dil:"Crush Cardivas 3.125mg in 3mL NS≈1mg/mL"}},
+  {n:"Dapagliflozin",brands:"Forxiga",prep:{type:"other"},perDay:"5-10mg/day",mxD:"10mg",mxDay:"10mg",d:[{lb:"Adol",type:"fixed",fixed:10,u:"mg",fr:"OD"}],tabs:[5,10],w:"SGLT2i off-label.",
+    rx:{tn:"Forxiga",form:"Tab",str:"10mg",fixed:10,unit:"mg",freq:"OD"}},
+  {n:"Digoxin",brands:"Digoxin Elixir, Digon 0.25mg",prep:{type:"liquid",brand:"Digoxin Elixir",conc:50,concU:"mcg/mL"},perDay:"5mcg/kg/dose OD wkday",mxD:"250mcg",mxDay:"250mcg",d:[{lb:"Start",val:5,u:"mcg",type:"perKg",fr:"OD Mon-Fri"},{lb:"Uptitrate",val:8,u:"mcg",type:"perKg",fr:"OD Mon-Fri"}],tabs:[0.25],w:"5mcg/kg/dose start. Weekends off. Target 0.5-0.9.",
+    rx:{tn:"Digoxin Elixir",form:"Syp",str:"50mcg/mL",dose:5,unit:"mcg",freq:"OD (Mon–Fri, weekends off)",tabTn:"Digon",tabStr:"0.25mg",tabUnit:"mg",adultMax:250}},
+  {n:"Dobutamine",brands:"Dobutrex",prep:{type:"inj",note:"6×wt in 100mL D5W"},iv:true,perDay:"Inf",mxD:"20",mxDay:"Cont",d:[{lb:"Inf",val:5,valHi:20,u:"mcg/kg/min",type:"infusion",fr:"CONTINUOUS"}],tabs:null,w:"Tachyphylaxis.",rx:{isInf:true,rxLine:"Inj Dobutamine 5mcg/kg/min — titrate"}},
+  {n:"Dopamine",brands:"Dopamine",prep:{type:"inj",note:"6×wt in 100mL D5W"},iv:true,perDay:"Inf",mxD:"20",mxDay:"Cont",d:[{lb:"Ino",val:5,valHi:10,u:"mcg/kg/min",type:"infusion",fr:"CONTINUOUS"}],tabs:null,w:"Phentolamine.",rx:{isInf:true,rxLine:"Inj Dopamine 5mcg/kg/min — titrate"}},
+  {n:"Enalapril",brands:"Envas",prep:{type:"dilute",tabBrand:"Envas 2.5mg",tab:2.5,vol:5,conc:0.5,concU:"mg/mL"},combos:"Envas-H",perDay:"0.1-0.5mg/kg/day",mxD:"20mg",mxDay:"40mg",d:[{lb:"Start",val:0.05,valHi:0.1,u:"mg",type:"perKg",fr:"OD–BD"},{lb:"Target",val:0.1,valHi:0.5,u:"mg",type:"perKg",fr:"OD–BD"}],tabs:[2.5,5,10],w:"1st-dose hypotension.",
+    rx:{tn:"Envas",form:"Tab",str:"2.5mg",dose:0.05,unit:"mg",freq:"BD",adultMax:20,dil:"Crush Envas 2.5mg in 5mL NS→0.5mg/mL"}},
+  {n:"Furosemide",brands:"Furoped, Lasix",prep:{type:"liquid",brand:"Furoped drops",conc:10,concU:"mg/mL"},combos:"Lasilactone (Furo20+Spirono50)",perDay:"1-6mg/kg/day",mxD:"40mg",mxDay:"6mg/kg",d:[{lb:"PO",val:1,valHi:2,u:"mg",type:"perKg",fr:"BD–TDS"},{lb:"IV",val:0.5,valHi:1,u:"mg",type:"perKg",fr:"BD–TDS",iv:true}],tabs:[20,40],w:"K+,Ca2+. If >40mg/dose → switch to Dytor (Torsemide).",
+    rx:{tn:"Furoped",form:"Drops",str:"10mg/mL",dose:1,unit:"mg",freq:"BD",tabTn:"Lasix",tabStr:"20mg",adultMax:40,
+      overMax:"Tab Dytor (Torsemide) 10mg — 1 tab OD–BD (or Dytor Plus 10/50 if + spironolactone needed)"}},
+  {n:"Ivabradine",brands:"Ivabrad",prep:{type:"dilute",tabBrand:"Ivabrad 5mg",tab:5,vol:5,conc:1,concU:"mg/mL"},perDay:"0.1-0.2mg/kg/day",mxD:"7.5mg",mxDay:"15mg",d:[{lb:"PO",val:0.05,valHi:0.1,u:"mg",type:"perKg",fr:"BD"}],tabs:[5,7.5],w:"DCM sinus.",
+    rx:{tn:"Ivabrad",form:"Tab",str:"5mg",dose:0.05,unit:"mg",freq:"BD",adultMax:7.5,dil:"Crush Ivabrad 5mg in 5mL NS→1mg/mL"}},
+  {n:"Levosimendan",brands:"Simdax",prep:{type:"inj"},iv:true,perDay:"Inf",mxD:"0.2",mxDay:"24h",d:[{lb:"Inf",val:0.05,valHi:0.2,u:"mcg/kg/min",type:"infusion",fr:"24h no load"}],tabs:null,w:"Limited.",rx:{isInf:true,rxLine:"Inj Levosimendan 0.05mcg/kg/min 24h — no loading"}},
+  {n:"Losartan",brands:"Losar",prep:{type:"dilute",tabBrand:"Losar 25mg",tab:25,vol:5,conc:5,concU:"mg/mL"},perDay:"0.5-1mg/kg/day",mxD:"50mg",mxDay:"100mg",d:[{lb:"PO",val:0.5,valHi:1,u:"mg",type:"perKg",fr:"OD"}],tabs:[25,50],w:"ACE-I intol.",
+    rx:{tn:"Losar",form:"Tab",str:"25mg",dose:0.5,unit:"mg",freq:"OD",adultMax:50,dil:"Crush Losar 25mg in 5mL→5mg/mL"}},
+  {n:"Metolazone",brands:"Zytanix",prep:{type:"dilute",tabBrand:"Zytanix 2.5mg",tab:2.5,vol:5,conc:0.5,concU:"mg/mL"},perDay:"0.2-0.4mg/kg/day",mxD:"5mg",mxDay:"10mg",d:[{lb:"PO",val:0.2,valHi:0.4,u:"mg",type:"perKg",fr:"OD–BD"}],tabs:[2.5,5],w:"30min before furo.",
+    rx:{tn:"Zytanix",form:"Tab",str:"2.5mg",dose:0.2,unit:"mg",freq:"OD",adultMax:5,dil:"Crush 2.5mg in 5mL→0.5mg/mL",note:"30min before furosemide"}},
+  {n:"Metoprolol",brands:"Metolar XR",prep:{type:"dilute",tabBrand:"Metolar 25mg",tab:25,vol:5,conc:5,concU:"mg/mL"},perDay:"1-6mg/kg/day",mxD:"100mg",mxDay:"200mg",d:[{lb:"PO",val:0.5,valHi:1,u:"mg",type:"perKg",fr:"BD"}],tabs:[25,50],w:"ER OD.",
+    rx:{tn:"Metolar",form:"Tab",str:"25mg",dose:0.5,unit:"mg",freq:"BD",adultMax:100,dil:"Crush 25mg in 5mL→5mg/mL"}},
+  {n:"Milrinone",brands:"Milrinone",prep:{type:"inj",note:"0.6×wt in 100mL D5W"},iv:true,perDay:"Inf",mxD:"0.75",mxDay:"Cont",d:[{lb:"Inf",val:0.25,valHi:0.75,u:"mcg/kg/min",type:"infusion",fr:"CONTINUOUS no load"}],tabs:null,w:"NO load.",rx:{isInf:true,rxLine:"Inj Milrinone 0.25mcg/kg/min — NO loading"}},
+  {n:"Sacubitril/Valsartan",brands:"VYMADA",prep:{type:"other"},perDay:"3-6mg/kg/day",mxD:"Per band",mxDay:"PANORAMA-HF",d:[{lb:"Start",val:1.6,u:"mg",type:"perKg",fr:"BD"}],tabs:["24/26","49/51","97/103"],w:"ARNI 36hr washout.",
+    rx:{tn:"VYMADA",form:"Tab",dose:1.6,unit:"mg",freq:"BD",
+      bandDose:true,bands:[{maxWt:20,line:"Tab VYMADA 24/26mg — ½ tab BD"},{maxWt:40,line:"Tab VYMADA 24/26mg — 1 tab BD"},{maxWt:999,line:"Tab VYMADA 49/51mg — 1 tab BD"}],
+      note:"ARNI. 36hr washout from ACE-I."}},
+  {n:"Spironolactone",brands:"Aldactone",prep:{type:"dilute",tabBrand:"Aldactone 25mg",tab:25,vol:5,conc:5,concU:"mg/mL"},combos:"Lasilactone",perDay:"1-3mg/kg/day",mxD:"50mg",mxDay:"100mg",d:[{lb:"PO",val:1,valHi:3,u:"mg",type:"perKg",fr:"OD–BD"}],tabs:[25,50],w:"K+.",
+    rx:{tn:"Aldactone",form:"Tab",str:"25mg",dose:0.5,unit:"mg",freq:"BD",adultMax:50,dil:"Crush 25mg in 5mL→5mg/mL"}},
+]},
+"chol":{title:"Hypercholesterolemia",icon:"🫀",drugs:[
+  {n:"Atorvastatin",brands:"Atorva",prep:{type:"other"},perDay:"10-20mg",mxD:"20mg",mxDay:"20mg",d:[{lb:"≥10yr",type:"fixed",fixed:10,u:"mg",fr:"OD evening"}],tabs:[10,20],w:"LFT,CK.",rx:{tn:"Atorva",form:"Tab",str:"10mg",fixed:10,unit:"mg",freq:"OD (evening)"}},
+  {n:"Atorvastatin+Ezetimibe",brands:"Atozet",prep:{type:"other"},perDay:"10/10mg",mxD:"20/10",mxDay:"20/10",d:[{lb:"≥10yr",type:"fixed",fixed:null,u:"",fr:"OD"}],tabs:null,w:"LFT.",rx:{rxLine:"Tab Atozet 10/10mg — 1 tab OD (evening)"}},
+  {n:"Ezetimibe",brands:"Ezedoc",prep:{type:"other"},perDay:"10mg",mxD:"10mg",mxDay:"10mg",d:[{lb:"≥10yr",type:"fixed",fixed:10,u:"mg",fr:"OD"}],tabs:[10],w:"Add to statin.",rx:{tn:"Ezedoc",form:"Tab",str:"10mg",fixed:10,unit:"mg",freq:"OD"}},
+  {n:"Rosuvastatin",brands:"Rozavel",prep:{type:"other"},perDay:"5-20mg",mxD:"20mg",mxDay:"20mg",d:[{lb:"≥10yr",type:"fixed",fixed:5,u:"mg",fr:"OD"}],tabs:[5,10,20],w:"LFT,CK.",rx:{tn:"Rozavel",form:"Tab",str:"5mg",fixed:5,unit:"mg",freq:"OD"}},
+  {n:"Rosuvastatin+Ezetimibe",brands:"Rosuvas-EZ",prep:{type:"other"},perDay:"10/10mg",mxD:"10/10",mxDay:"20/10",d:[{lb:"≥10yr",type:"fixed",fixed:null,u:"",fr:"OD"}],tabs:null,w:"LFT.",rx:{rxLine:"Tab Rosuvas-EZ 10/10mg — 1 tab OD"}},
+]},
+"htn":{title:"Hypertension",icon:"🔴",drugs:[
+  {n:"Amlodipine",brands:"Amcard",prep:{type:"dilute",tabBrand:"Amcard 2.5mg",tab:2.5,vol:5,conc:0.5,concU:"mg/mL"},perDay:"0.1-0.5mg/kg/day",mxD:"10mg",mxDay:"10mg",d:[{lb:"PO",val:0.1,valHi:0.5,u:"mg",type:"perKg",fr:"OD–BD"}],tabs:[2.5,5,10],w:"Start 0.05.",
+    rx:{tn:"Amcard",form:"Tab",str:"2.5mg",dose:0.05,unit:"mg",freq:"OD",adultMax:10,dil:"Crush 2.5mg in 5mL→0.5mg/mL"}},
+  {n:"Atenolol",brands:"Aten",prep:{type:"dilute",tabBrand:"Aten 25mg",tab:25,vol:5,conc:5,concU:"mg/mL"},perDay:"0.5-2mg/kg/day",mxD:"100mg",mxDay:"100mg",d:[{lb:"PO",val:0.5,valHi:2,u:"mg",type:"perKg",fr:"OD–BD"}],tabs:[25,50],w:"No asthma.",
+    rx:{tn:"Aten",form:"Tab",str:"25mg",dose:0.25,unit:"mg",freq:"BD",adultMax:100,dil:"Crush 25mg in 5mL→5mg/mL"}},
+  {n:"Clonidine",brands:"Arkamin",prep:{type:"dilute",tabBrand:"Arkamin 100mcg",tab:0.1,vol:5,conc:0.02,concU:"mg/mL"},perDay:"10-20mcg/kg/day",mxD:"0.3mg",mxDay:"0.9mg",d:[{lb:"PO",val:0.01,valHi:0.02,u:"mg",type:"perKg",fr:"BD–TDS"}],tabs:[0.1,0.15],w:"Rebound.",
+    rx:{tn:"Arkamin",form:"Tab",str:"100mcg",dose:5,unit:"mcg",freq:"BD",adultMax:300,dil:"Crush 100mcg in 5mL→20mcg/mL"}},
+  {n:"Enalapril",brands:"Envas",prep:{type:"dilute",tabBrand:"Envas 2.5mg",tab:2.5,vol:5,conc:0.5,concU:"mg/mL"},perDay:"0.05-0.2mg/kg/day",mxD:"20mg",mxDay:"40mg",d:[{lb:"PO",val:0.05,valHi:0.2,u:"mg",type:"perKg",fr:"OD–BD"}],tabs:[2.5,5,10],w:"Start half.",
+    rx:{tn:"Envas",form:"Tab",str:"2.5mg",dose:0.025,unit:"mg",freq:"BD",adultMax:20,dil:"Crush 2.5mg in 5mL→0.5mg/mL"}},
+  {n:"Furosemide",brands:"Furoped, Lasix",prep:{type:"liquid",brand:"Furoped",conc:10,concU:"mg/mL"},perDay:"1-4mg/kg/day",mxD:"40mg",mxDay:"6mg/kg",d:[{lb:"PO",val:1,valHi:4,u:"mg",type:"perKg",fr:"BD–TDS"}],tabs:[20,40],w:"Vol HTN.",
+    rx:{tn:"Furoped",form:"Drops",str:"10mg/mL",dose:0.5,unit:"mg",freq:"BD",tabTn:"Lasix",tabStr:"20mg",adultMax:40,
+      overMax:"Tab Dytor 10mg — 1 tab OD–BD"}},
+  {n:"Labetalol",brands:"Lobet",prep:{type:"dilute",tabBrand:"Lobet 100mg",tab:100,vol:10,conc:10,concU:"mg/mL"},perDay:"2-5mg/kg/day",mxD:"100mg",mxDay:"300mg",d:[{lb:"PO",val:2,valHi:5,u:"mg",type:"perKg",fr:"BD"}],tabs:[100],w:"α+β.",
+    rx:{tn:"Lobet",form:"Tab",str:"100mg",dose:1,unit:"mg",freq:"BD",adultMax:100,dil:"Crush 100mg in 10mL→10mg/mL"}},
+  {n:"Losartan",brands:"Losar",prep:{type:"dilute",tabBrand:"Losar 50mg",tab:50,vol:5,conc:10,concU:"mg/mL"},perDay:"1-1.5mg/kg/day",mxD:"50mg",mxDay:"100mg",d:[{lb:"PO",val:1,valHi:1.5,u:"mg",type:"perKg",fr:"OD–BD"}],tabs:[25,50],w:"ARB.",
+    rx:{tn:"Losar",form:"Tab",str:"25mg",dose:0.5,unit:"mg",freq:"BD",adultMax:50,dil:"Crush 50mg in 5mL→10mg/mL"}},
+  {n:"Prazosin",brands:"Minipress XL",prep:{type:"dilute",tabBrand:"Minipress 2.5mg",tab:2.5,vol:5,conc:0.5,concU:"mg/mL"},perDay:"0.1-0.5mg/kg/day",mxD:"5mg",mxDay:"20mg",d:[{lb:"PO",val:0.1,valHi:0.5,u:"mg",type:"perKg",fr:"BD–TDS"}],tabs:[2.5,5],w:"1st-dose bedtime.",
+    rx:{tn:"Minipress",form:"Tab",str:"2.5mg",dose:0.05,unit:"mg",freq:"BD",adultMax:5,dil:"Crush 2.5mg in 5mL→0.5mg/mL"}},
+  {n:"Amlopres-AT",brands:"Amlopres-AT",prep:{type:"other"},perDay:"Combo",mxD:"Per component",mxDay:"Per component",d:[{lb:"Combo",type:"fixed",fixed:null,u:"",fr:"OD"}],tabs:null,w:"Amlo+Aten combo.",rx:{rxLine:"Tab Amlopres-AT 2.5/25 — 1 tab OD"}},
+  {n:"Envas-H",brands:"Envas-H",prep:{type:"other"},perDay:"Combo",mxD:"Per component",mxDay:"Per component",d:[{lb:"Combo",type:"fixed",fixed:null,u:"",fr:"OD–BD"}],tabs:null,w:"Enalapril+HCTZ.",rx:{rxLine:"Tab Envas-H (Enalapril 5 + HCTZ 12.5) — 1 tab OD"}},
+  {n:"Losar-H",brands:"Losar-H",prep:{type:"other"},perDay:"Combo",mxD:"Per component",mxDay:"Per component",d:[{lb:"Combo",type:"fixed",fixed:null,u:"",fr:"OD"}],tabs:null,w:"Losartan+HCTZ.",rx:{rxLine:"Tab Losar-H (Losartan 50 + HCTZ 12.5) — 1 tab OD"}},
+]},
+"ie":{title:"Infective Endocarditis",icon:"💉",drugs:[
+  {n:"Amoxicillin ppx",brands:"Mox",prep:{type:"liquid",brand:"Mox syrup",conc:50,concU:"mg/mL"},perDay:"50mg/kg single",mxD:"2g",mxDay:"2g",d:[{lb:"Pre-proc",val:50,u:"mg",type:"perKg",fr:"SINGLE 30-60min"}],tabs:[250,500],w:"High-risk.",
+    rx:{tn:"Mox",form:"Syp",str:"250mg/5mL",dose:50,unit:"mg",freq:"SINGLE 30-60min pre-procedure",tabStr:"500mg",adultMax:2000}},
+  {n:"Ampicillin",brands:"Ampilin",prep:{type:"inj"},iv:true,perDay:"200-300mg/kg",mxD:"3g",mxDay:"12g",d:[{lb:"IV",val:50,u:"mg",type:"perKg",fr:"Q6h"}],tabs:null,w:"+Gent.",rx:{tn:"Ampicillin",form:"Inj",dose:50,unit:"mg",freq:"Q6h IV",adultMax:3000}},
+  {n:"Ceftriaxone",brands:"Monocef",prep:{type:"inj"},iv:true,perDay:"100mg/kg",mxD:"4g",mxDay:"4g",d:[{lb:"IV",val:50,u:"mg",type:"perKg",fr:"BD"}],tabs:null,w:"CI neo+Ca2+.",rx:{tn:"Monocef",form:"Inj",dose:50,unit:"mg",freq:"BD IV",adultMax:2000}},
+  {n:"Clindamycin ppx",brands:"Dalacin C",prep:{type:"liquid",brand:"Dalacin C susp",conc:15,concU:"mg/mL"},perDay:"20mg/kg",mxD:"600mg",mxDay:"600mg",d:[{lb:"Pre-proc",val:20,u:"mg",type:"perKg",fr:"SINGLE 30-60min"}],tabs:[150,300],w:"PCN allergy.",
+    rx:{tn:"Dalacin C",form:"Syp",str:"75mg/5mL",dose:20,unit:"mg",freq:"SINGLE pre-procedure",tabStr:"300mg",adultMax:600}},
+  {n:"Gentamicin",brands:"Garamycin",prep:{type:"inj"},iv:true,perDay:"3-7mg/kg",mxD:"levels",mxDay:"levels",d:[{lb:"IV",val:1,u:"mg",type:"perKg",fr:"Q8h"}],tabs:null,w:"Trough<1.",rx:{tn:"Gentamicin",form:"Inj",dose:1,unit:"mg",freq:"Q8h IV"}},
+  {n:"Meropenem",brands:"Meronem",prep:{type:"inj",note:"in NS 15-30min"},iv:true,perDay:"60-120mg/kg",mxD:"2g",mxDay:"6g",d:[{lb:"Std",val:20,u:"mg",type:"perKg",fr:"Q8h"}],tabs:null,w:"Carbapenem.",rx:{tn:"Meronem",form:"Inj",dose:20,unit:"mg",freq:"Q8h IV",adultMax:2000}},
+  {n:"Pip-Taz",brands:"Tazact",prep:{type:"inj",note:"4.5g in 50-100mL NS"},iv:true,perDay:"240-400mg/kg pip",mxD:"4g",mxDay:"16g",d:[{lb:"Std",val:80,u:"mg",type:"perKg",fr:"Q6-8h pip"}],tabs:null,w:"High Na+.",rx:{tn:"Tazact",form:"Inj",dose:80,unit:"mg",freq:"Q8h IV",adultMax:4000}},
+  {n:"Vancomycin",brands:"Vancomycin",prep:{type:"inj"},iv:true,perDay:"40-60mg/kg",mxD:"trough",mxDay:"trough",d:[{lb:"IV",val:10,u:"mg",type:"perKg",fr:"Q6h"}],tabs:null,w:"≥60min.",rx:{tn:"Vancomycin",form:"Inj",dose:10,unit:"mg",freq:"Q6h IV (≥60min infuse)"}},
+]},
+"nsvt":{title:"Neonatal SVT",icon:"⚡",drugs:[
+  {n:"Adenosine",brands:"Adenoject",prep:{type:"inj"},iv:true,d:[{lb:"1st",val:0.1,u:"mg",type:"perKg",fr:"RAPID"},{lb:"2nd",val:0.2,u:"mg",type:"perKg",fr:""},{lb:"3rd",val:0.3,u:"mg",type:"perKg",fr:""}],perDay:"PRN",mxD:"12mg",mxDay:"PRN",tabs:null,w:"Record rhythm.",rx:{tn:"Adenoject",form:"Inj",dose:0.1,unit:"mg",freq:"RAPID IV push"}},
+  {n:"Amiodarone PO",brands:"Cordarone",prep:{type:"dilute",tabBrand:"Cordarone 100mg",tab:100,vol:10,conc:10,concU:"mg/mL"},d:[{lb:"Load",val:10,valHi:20,u:"mg",type:"perKg",fr:"OD×7-10d"},{lb:"Maint",val:5,valHi:10,u:"mg",type:"perKg",fr:"OD"}],perDay:"5-20mg/kg",mxD:"200mg",mxDay:"400mg",tabs:[100,200],w:"TFT,LFT.",rx:{tn:"Cordarone",form:"Tab",str:"100mg",dose:10,unit:"mg",freq:"OD (loading 7-10d)",dil:"Crush 100mg in 10mL→10mg/mL"}},
+  {n:"Digoxin",brands:"Digoxin Elixir",prep:{type:"liquid",brand:"Digoxin Elixir",conc:50,concU:"mcg/mL"},d:[{lb:"Maint",val:5,u:"mcg",type:"perKg",fr:"OD Mon-Fri"}],perDay:"5mcg/kg/dose",mxD:"250mcg",mxDay:"250mcg",tabs:[0.25],w:"NOT WPW. Weekends off.",rx:{tn:"Digoxin Elixir",form:"Syp",str:"50mcg/mL",dose:5,unit:"mcg",freq:"OD (Mon–Fri)",tabTn:"Digon",tabStr:"0.25mg"}},
+  {n:"Propranolol",brands:"Inderal",prep:{type:"dilute",tabBrand:"Inderal 10mg",tab:10,vol:10,conc:1,concU:"mg/mL"},d:[{lb:"Maint",val:1,valHi:4,u:"mg",type:"perKg",fr:"TDS–QDS"}],perDay:"1-4mg/kg",mxD:"40mg",mxDay:"4mg/kg",tabs:[10,20,40],w:"<1yr 1st line.",rx:{tn:"Inderal",form:"Tab",str:"10mg",dose:1,unit:"mg",freq:"TDS",dil:"Crush 10mg in 10mL→1mg/mL"}},
+  {n:"Sotalol",brands:"Sotagard",prep:{type:"dilute",tabBrand:"Sotagard 40mg",tab:40,vol:8,conc:5,concU:"mg/mL"},d:[{lb:"PO",val:2,valHi:8,u:"mg",type:"perKg",fr:"BD–TDS"}],perDay:"2-8mg/kg",mxD:"80mg",mxDay:"8mg/kg",tabs:[40,80],w:"ADMIT QTc.",rx:{tn:"Sotagard",form:"Tab",str:"40mg",dose:1,unit:"mg",freq:"BD",dil:"Crush 40mg in 8mL→5mg/mL"}},
+]},
+"pah":{title:"Pulmonary Vasodilators",icon:"🫁",drugs:[
+  {n:"Ambrisentan",brands:"Cipla/Sun",prep:{type:"other"},perDay:"5-10mg",mxD:"10mg",mxDay:"10mg",d:[{lb:">12yr",type:"fixed",fixed:5,u:"mg",fr:"OD"}],tabs:[5,10],w:"ERA.",rx:{tn:"Ambrisentan",form:"Tab",str:"5mg",fixed:5,unit:"mg",freq:"OD"}},
+  {n:"Bosentan",brands:"Bosentas",prep:{type:"dilute",tabBrand:"Bosentas 62.5mg",tab:62.5,vol:5,conc:12.5,concU:"mg/mL"},combos:"Endobloc-T; Pulmonext",perDay:"2mg/kg/day",mxD:"125mg",mxDay:"250mg",d:[{lb:"<10kg",val:1,u:"mg",type:"perKg",fr:"BD"},{lb:"10-20",type:"fixed",fixed:31.25,u:"mg",fr:"BD"},{lb:"20-40",type:"fixed",fixed:62.5,u:"mg",fr:"BD"},{lb:">40",type:"fixed",fixed:125,u:"mg",fr:"BD"}],tabs:[62.5,125],w:"LFT monthly.",
+    rx:{tn:"Bosentas",form:"Tab",str:"62.5mg",dose:1,unit:"mg",freq:"BD",adultMax:125,dil:"Dissolve 62.5mg in 5mL water→12.5mg/mL",
+      bandDose:true,bands:[{maxWt:10,useDil:true},{maxWt:20,line:"Tab Bosentas 62.5mg — ½ tab BD"},{maxWt:40,line:"Tab Bosentas 62.5mg — 1 tab BD"},{maxWt:999,line:"Tab Bosentas 125mg — 1 tab BD"}]}},
+  {n:"Iloprost",brands:"Ventavis",prep:{type:"inj"},perDay:"30-45mcg",mxD:"5mcg",mxDay:"45mcg",d:[{lb:"INH",type:"fixed",fixed:5,u:"mcg",fr:"6-9×/day"}],tabs:null,w:"Prostacyclin.",rx:{rxLine:"Inh Ventavis 5mcg — 6-9×/day via dedicated nebulizer"}},
+  {n:"Macitentan",brands:"Opsumit",prep:{type:"other"},perDay:"10mg",mxD:"10mg",mxDay:"10mg",d:[{lb:"Adol",type:"fixed",fixed:10,u:"mg",fr:"OD"}],tabs:[10],w:"Limited peds.",rx:{tn:"Opsumit",form:"Tab",str:"10mg",fixed:10,unit:"mg",freq:"OD"}},
+  {n:"Milrinone",brands:"Milrinone",prep:{type:"inj",note:"0.6×wt in 100mL D5W"},iv:true,perDay:"Inf",mxD:"0.75",mxDay:"Cont",d:[{lb:"Inf",val:0.25,valHi:0.75,u:"mcg/kg/min",type:"infusion",fr:"CONTINUOUS no load"}],tabs:null,w:"NO load.",rx:{isInf:true,rxLine:"Inj Milrinone 0.25mcg/kg/min — NO loading"}},
+  {n:"Riociguat",brands:"Adempas",prep:{type:"other"},perDay:"0.15-0.45mg/kg",mxD:"2.5mg",mxDay:"7.5mg",d:[{lb:"Peds",val:0.05,valHi:0.15,u:"mg",type:"perKg",fr:"TDS"}],tabs:[0.5,1,1.5,2,2.5],w:"NEVER+PDE5i.",
+    rx:{tn:"Adempas",form:"Tab",str:"0.5mg",dose:0.05,unit:"mg",freq:"TDS",adultMax:2.5}},
+  {n:"Sildenafil",brands:"Penegra, Suhagra, Pulmosil",prep:{type:"liquid",brand:"Pulmosil susp",conc:10,concU:"mg/mL"},combos:"Endobloc-T; Pulmonext",perDay:"3mg/kg/day",mxD:"20mg",mxDay:"60mg",d:[{lb:"Child",val:1,u:"mg",type:"perKg",fr:"TDS"}],tabs:[25,50],w:"Pulmosil <10kg. CI: riociguat.",
+    rx:{tn:"Pulmosil",form:"Syp",str:"10mg/mL",dose:1,unit:"mg",freq:"TDS",tabTn:"Suhagra",tabStr:"25mg",adultMax:20}},
+  {n:"Tadalafil",brands:"Tazzle",prep:{type:"dilute",tabBrand:"Tazzle 5mg",tab:5,vol:5,conc:1,concU:"mg/mL"},perDay:"0.5-1mg/kg",mxD:"20mg",mxDay:"40mg",d:[{lb:"PO",val:0.5,valHi:1,u:"mg",type:"perKg",fr:"OD"}],tabs:[2.5,5,10,20],w:"OD.",
+    rx:{tn:"Tazzle",form:"Tab",str:"5mg",dose:0.5,unit:"mg",freq:"OD",adultMax:20,dil:"Crush 5mg in 5mL→1mg/mL"}},
+]},
+"quick":{title:"Quick Reference",icon:"📋",drugs:[
+  {n:"Adenosine",brands:"Adenoject",prep:{type:"inj"},iv:true,perDay:"PRN",mxD:"12mg",mxDay:"PRN",d:[{lb:"IV",val:0.1,u:"mg",type:"perKg",fr:"RAPID"}],tabs:null,w:"100→200→300mcg/kg.",rx:{tn:"Adenoject",form:"Inj",dose:0.1,unit:"mg",freq:"RAPID IV push"}},
+  {n:"Aspirin",brands:"Ecosprin",prep:{type:"other"},perDay:"5mg/kg/day",mxD:"150mg",mxDay:"4g ARF",d:[{lb:"Plt",val:5,u:"mg",type:"perKg",fr:"OD"}],tabs:[75,150],w:"Post device 5mg/kg.",rx:{tn:"Ecosprin",form:"Tab",str:"75mg",dose:5,unit:"mg",freq:"OD",adultMax:75}},
+  {n:"Bosentan",brands:"Bosentas",prep:{type:"dilute",tabBrand:"Bosentas 62.5mg",tab:62.5,vol:5,conc:12.5,concU:"mg/mL"},combos:"Endobloc-T",perDay:"2mg/kg",mxD:"125mg",mxDay:"250mg",d:[{lb:"PO",val:1,u:"mg",type:"perKg",fr:"BD"}],tabs:[62.5,125],w:"LFT.",
+    rx:{tn:"Bosentas",form:"Tab",str:"62.5mg",dose:1,unit:"mg",freq:"BD",adultMax:125,bandDose:true,bands:[{maxWt:10,useDil:true},{maxWt:20,line:"Tab Bosentas 62.5mg — ½ tab BD"},{maxWt:40,line:"Tab Bosentas 62.5mg — 1 tab BD"},{maxWt:999,line:"Tab Bosentas 125mg — 1 tab BD"}],dil:"Dissolve 62.5mg in 5mL water→12.5mg/mL"}},
+  {n:"Carvedilol",brands:"Cardivas",prep:{type:"dilute",tabBrand:"Cardivas 3.125mg",tab:3.125,vol:3,conc:1,concU:"≈1mg/mL"},perDay:"0.1-0.2mg/kg",mxD:"25mg",mxDay:"50mg",d:[{lb:"Start",val:0.05,valHi:0.1,u:"mg",type:"perKg",fr:"BD"}],tabs:[3.125,6.25,12.5,25],w:"NOT decomp.",
+    rx:{tn:"Cardivas",form:"Tab",str:"3.125mg",dose:0.05,unit:"mg",freq:"BD",adultMax:25,dil:"Crush 3.125mg in 3mL≈1mg/mL"}},
+  {n:"Clopidogrel",brands:"Clopilet",prep:{type:"dilute",tabBrand:"Clopilet 75mg",tab:75,vol:7.5,conc:10,concU:"mg/mL"},perDay:"1mg/kg",mxD:"75mg",mxDay:"75mg",d:[{lb:"PO",val:1,u:"mg",type:"perKg",fr:"OD"}],tabs:[75],w:"Post-stent.",rx:{tn:"Clopilet",form:"Tab",str:"75mg",dose:1,unit:"mg",freq:"OD",adultMax:75}},
+  {n:"Digoxin",brands:"Digoxin Elixir, Digon 0.25mg",prep:{type:"liquid",brand:"Digoxin Elixir",conc:50,concU:"mcg/mL"},perDay:"5mcg/kg/dose OD",mxD:"250mcg",mxDay:"250mcg",d:[{lb:">1yr",val:5,u:"mcg",type:"perKg",fr:"OD Mon-Fri"}],tabs:[0.25],w:"Weekends off. 0.5-0.9.",
+    rx:{tn:"Digoxin Elixir",form:"Syp",str:"50mcg/mL",dose:5,unit:"mcg",freq:"OD (Mon–Fri, weekends off)",tabTn:"Digon",tabStr:"0.25mg",adultMax:250}},
+  {n:"Enalapril",brands:"Envas",prep:{type:"dilute",tabBrand:"Envas 2.5mg",tab:2.5,vol:5,conc:0.5,concU:"mg/mL"},perDay:"0.1mg/kg/day",mxD:"20mg",mxDay:"40mg",d:[{lb:"Start",val:0.05,u:"mg",type:"perKg",fr:"BD"}],tabs:[2.5,5],w:"1st-dose.",rx:{tn:"Envas",form:"Tab",str:"2.5mg",dose:0.05,unit:"mg",freq:"BD",adultMax:20,dil:"Crush 2.5mg in 5mL→0.5mg/mL"}},
+  {n:"Furosemide",brands:"Furoped, Lasix",prep:{type:"liquid",brand:"Furoped",conc:10,concU:"mg/mL"},combos:"Lasilactone",perDay:"2mg/kg/day",mxD:"40mg",mxDay:"6mg/kg",d:[{lb:"PO",val:1,u:"mg",type:"perKg",fr:"BD"}],tabs:[20,40],w:"K+.",
+    rx:{tn:"Furoped",form:"Drops",str:"10mg/mL",dose:1,unit:"mg",freq:"BD",tabTn:"Lasix",tabStr:"20mg",adultMax:40,overMax:"Tab Dytor 10mg — 1 tab OD–BD"}},
+  {n:"Heparin",brands:"Heparin",prep:{type:"inj"},iv:true,perDay:"Inf",mxD:"aPTT",mxDay:"aPTT",d:[{lb:"Inf",val:10,valHi:20,u:"U/kg/h",type:"infusion",fr:"CONTINUOUS"}],tabs:null,w:"aPTT 60-85.",rx:{isInf:true,rxLine:"Inj Heparin 10-20U/kg/h — titrate to aPTT"}},
+  {n:"Ivabradine",brands:"Ivabrad",prep:{type:"dilute",tabBrand:"Ivabrad 5mg",tab:5,vol:5,conc:1,concU:"mg/mL"},perDay:"0.1mg/kg/day",mxD:"7.5mg",mxDay:"15mg",d:[{lb:"PO",val:0.05,u:"mg",type:"perKg",fr:"BD"}],tabs:[5,7.5],w:"DCM.",rx:{tn:"Ivabrad",form:"Tab",str:"5mg",dose:0.05,unit:"mg",freq:"BD",adultMax:7.5,dil:"Crush 5mg in 5mL→1mg/mL"}},
+  {n:"Metoprolol",brands:"Metolar XR",prep:{type:"dilute",tabBrand:"Metolar 25mg",tab:25,vol:5,conc:5,concU:"mg/mL"},perDay:"2mg/kg/day",mxD:"100mg",mxDay:"200mg",d:[{lb:"PO",val:1,u:"mg",type:"perKg",fr:"BD"}],tabs:[25,50],w:"ER.",rx:{tn:"Metolar",form:"Tab",str:"25mg",dose:1,unit:"mg",freq:"BD",adultMax:100,dil:"Crush 25mg in 5mL→5mg/mL"}},
+  {n:"Propranolol",brands:"Inderal",prep:{type:"dilute",tabBrand:"Inderal 10mg",tab:10,vol:10,conc:1,concU:"mg/mL"},perDay:"3mg/kg/day",mxD:"40mg",mxDay:"8mg/kg",d:[{lb:"PO",val:1,u:"mg",type:"perKg",fr:"TDS"}],tabs:[10,20,40],w:"<1yr SVT.",rx:{tn:"Inderal",form:"Tab",str:"10mg",dose:1,unit:"mg",freq:"TDS",adultMax:40,dil:"Crush 10mg in 10mL→1mg/mL"}},
+  {n:"Sildenafil",brands:"Suhagra, Pulmosil",prep:{type:"liquid",brand:"Pulmosil",conc:10,concU:"mg/mL"},combos:"Endobloc-T",perDay:"3mg/kg/day",mxD:"20mg",mxDay:"60mg",d:[{lb:"PO",val:1,u:"mg",type:"perKg",fr:"TDS"}],tabs:[25,50],w:"Pulmosil <10kg.",
+    rx:{tn:"Pulmosil",form:"Syp",str:"10mg/mL",dose:1,unit:"mg",freq:"TDS",tabTn:"Suhagra",tabStr:"25mg",adultMax:20}},
+  {n:"Spironolactone",brands:"Aldactone",prep:{type:"dilute",tabBrand:"Aldactone 25mg",tab:25,vol:5,conc:5,concU:"mg/mL"},combos:"Lasilactone",perDay:"2mg/kg/day",mxD:"50mg",mxDay:"100mg",d:[{lb:"PO",val:1,u:"mg",type:"perKg",fr:"BD"}],tabs:[25,50],w:"K+.",rx:{tn:"Aldactone",form:"Tab",str:"25mg",dose:1,unit:"mg",freq:"BD",adultMax:50,dil:"Crush 25mg in 5mL→5mg/mL"}},
+]},
+"shunt":{title:"Shunt Lesion (VSD/ASD/PDA)",icon:"🔄",drugs:[
+  {n:"Digoxin",brands:"Digoxin Elixir",prep:{type:"liquid",brand:"Digoxin Elixir",conc:50,concU:"mcg/mL"},perDay:"5mcg/kg/dose",mxD:"250mcg",mxDay:"250mcg",d:[{lb:"Maint",val:5,u:"mcg",type:"perKg",fr:"OD Mon-Fri"}],tabs:[0.25],w:"Weekends off.",rx:{tn:"Digoxin Elixir",form:"Syp",str:"50mcg/mL",dose:5,unit:"mcg",freq:"OD (Mon–Fri)",tabTn:"Digon",tabStr:"0.25mg",adultMax:250}},
+  {n:"Enalapril",brands:"Envas",prep:{type:"dilute",tabBrand:"Envas 2.5mg",tab:2.5,vol:5,conc:0.5,concU:"mg/mL"},perDay:"0.1mg/kg/day",mxD:"20mg",mxDay:"40mg",d:[{lb:"PO",val:0.05,u:"mg",type:"perKg",fr:"BD"}],tabs:[2.5,5],w:"↓Qp:Qs.",rx:{tn:"Envas",form:"Tab",str:"2.5mg",dose:0.05,unit:"mg",freq:"BD",adultMax:20,dil:"Crush 2.5mg in 5mL→0.5mg/mL"}},
+  {n:"Furosemide",brands:"Furoped, Lasix",prep:{type:"liquid",brand:"Furoped",conc:10,concU:"mg/mL"},combos:"Lasilactone",perDay:"2mg/kg/day",mxD:"40mg",mxDay:"6mg/kg",d:[{lb:"PO",val:1,u:"mg",type:"perKg",fr:"BD"}],tabs:[20,40],w:"Furoped <10kg.",rx:{tn:"Furoped",form:"Drops",str:"10mg/mL",dose:1,unit:"mg",freq:"BD",tabTn:"Lasix",tabStr:"20mg",adultMax:40,overMax:"Tab Dytor 10mg — 1 tab OD–BD"}},
+  {n:"Spironolactone",brands:"Aldactone",prep:{type:"dilute",tabBrand:"Aldactone 25mg",tab:25,vol:5,conc:5,concU:"mg/mL"},combos:"Lasilactone",perDay:"2mg/kg/day",mxD:"50mg",mxDay:"100mg",d:[{lb:"PO",val:1,u:"mg",type:"perKg",fr:"BD"}],tabs:[25,50],w:"K+.",rx:{tn:"Aldactone",form:"Tab",str:"25mg",dose:1,unit:"mg",freq:"BD",adultMax:50,dil:"Crush 25mg in 5mL→5mg/mL"}},
+]},
+"svt":{title:"SVT",icon:"⚡",drugs:[
+  {n:"Adenosine",brands:"Adenoject",prep:{type:"inj"},iv:true,d:[{lb:"1st",val:0.1,u:"mg",type:"perKg",fr:"RAPID"},{lb:"2nd",val:0.2,u:"mg",type:"perKg",fr:""},{lb:"3rd",val:0.3,u:"mg",type:"perKg",fr:""}],perDay:"PRN",mxD:"12mg",mxDay:"PRN",tabs:null,w:"Double-syringe.",rx:{tn:"Adenoject",form:"Inj",dose:0.1,unit:"mg",freq:"RAPID IV push"}},
+  {n:"Amiodarone PO",brands:"Cordarone",prep:{type:"dilute",tabBrand:"Cordarone 100mg",tab:100,vol:10,conc:10,concU:"mg/mL"},perDay:"5-10mg/kg",mxD:"200mg",mxDay:"400mg",d:[{lb:"PO",val:5,valHi:10,u:"mg",type:"perKg",fr:"OD"}],tabs:[100,200],w:"TFT,LFT.",rx:{tn:"Cordarone",form:"Tab",str:"100mg",dose:5,unit:"mg",freq:"OD",adultMax:200,dil:"Crush 100mg in 10mL→10mg/mL"}},
+  {n:"Atenolol",brands:"Aten",prep:{type:"dilute",tabBrand:"Aten 25mg",tab:25,vol:5,conc:5,concU:"mg/mL"},perDay:"0.5-2mg/kg",mxD:"100mg",mxDay:"100mg",d:[{lb:"PO",val:0.5,valHi:2,u:"mg",type:"perKg",fr:"OD–BD"}],tabs:[25,50],w:">1yr.",rx:{tn:"Aten",form:"Tab",str:"25mg",dose:0.25,unit:"mg",freq:"BD",adultMax:100,dil:"Crush 25mg in 5mL→5mg/mL"}},
+  {n:"Flecainide",brands:"Limited India",prep:{type:"dilute",tabBrand:"Flecainide 50mg",tab:50,vol:10,conc:5,concU:"mg/mL"},perDay:"2-6mg/kg",mxD:"100mg",mxDay:"200mg",d:[{lb:"PO",val:2,valHi:6,u:"mg",type:"perKg",fr:"BD–TDS"}],tabs:[50,100],w:"CI structural.",rx:{tn:"Flecainide",form:"Tab",str:"50mg",dose:1,unit:"mg",freq:"BD",adultMax:100,dil:"Crush 50mg in 10mL→5mg/mL"}},
+  {n:"Propranolol",brands:"Inderal",prep:{type:"dilute",tabBrand:"Inderal 10mg",tab:10,vol:10,conc:1,concU:"mg/mL"},perDay:"1-4mg/kg",mxD:"40mg",mxDay:"8mg/kg",d:[{lb:"PO",val:1,u:"mg",type:"perKg",fr:"TDS–QDS"}],tabs:[10,20,40],w:"<1yr 1st-line.",rx:{tn:"Inderal",form:"Tab",str:"10mg",dose:1,unit:"mg",freq:"TDS",adultMax:40,dil:"Crush 10mg in 10mL→1mg/mL"}},
+  {n:"Sotalol",brands:"Sotagard",prep:{type:"dilute",tabBrand:"Sotagard 40mg",tab:40,vol:8,conc:5,concU:"mg/mL"},perDay:"2-8mg/kg",mxD:"80mg",mxDay:"8mg/kg",d:[{lb:"PO",val:1,u:"mg",type:"perKg",fr:"BD–TDS"}],tabs:[40,80],w:"ADMIT QTc.",rx:{tn:"Sotagard",form:"Tab",str:"40mg",dose:1,unit:"mg",freq:"BD",adultMax:160,dil:"Crush 40mg in 8mL→5mg/mL"}},
+  {n:"Verapamil (>1yr)",brands:"Calaptin",prep:{type:"inj"},iv:true,d:[{lb:"IV >1yr",val:0.1,valHi:0.3,u:"mg",type:"perKg",fr:"Over 2min"}],perDay:"4-8mg/kg PO",mxD:"5mg IV",mxDay:"480mg",tabs:[40,80],w:"⛔ CI <1yr FATAL.",rx:{tn:"Calaptin",form:"Inj",dose:0.1,unit:"mg",freq:"slow IV. ⛔ CI <1yr"}},
+]},
+"tet":{title:"Tet Spell",icon:"🔵",drugs:[
+  {n:"Esmolol",brands:"Esmocard",prep:{type:"inj"},iv:true,d:[{lb:"Load",val:100,valHi:500,u:"mcg",type:"perKg",fr:"Over 1min"},{lb:"Inf",val:50,valHi:300,u:"mcg/kg/min",type:"infusion",fr:"CONTINUOUS"}],perDay:"Inf",mxD:"500mcg/kg",mxDay:"300mcg/kg/min",tabs:null,w:"Ultra-short.",rx:{isInf:true,rxLine:"Inj Esmocard 100mcg/kg load; then 50mcg/kg/min"}},
+  {n:"Ketamine",brands:"Aneket",prep:{type:"inj",note:"50mg/mL→10mg/mL"},iv:true,d:[{lb:"IV",val:0.5,valHi:2,u:"mg",type:"perKg",fr:"PRN"},{lb:"IM",val:2,valHi:3,u:"mg",type:"perKg",fr:"PRN"}],perDay:"PRN",mxD:"2mg/kg",mxDay:"none",tabs:null,w:"↑SVR.",rx:{tn:"Aneket",form:"Inj",dose:1,unit:"mg",freq:"IV PRN (dilute to 10mg/mL)"}},
+  {n:"NS Bolus",brands:"NS",prep:{type:"inj"},iv:true,d:[{lb:"Bolus",val:10,valHi:20,u:"mL",type:"perKg",fr:"PRN"}],perDay:"PRN",mxD:"20mL/kg",mxDay:"",tabs:null,w:"↑Preload.",rx:{tn:"NS 0.9%",form:"Inj",dose:10,unit:"mL",freq:"bolus PRN"}},
+  {n:"Phenylephrine",brands:"Phenylephrine",prep:{type:"inj",note:"Dilute to 100mcg/mL"},iv:true,d:[{lb:"IV",val:5,valHi:20,u:"mcg",type:"perKg",fr:"PRN q10-15min"}],perDay:"PRN",mxD:"200mcg",mxDay:"500mcg",tabs:null,w:"Dilute!",rx:{tn:"Phenylephrine",form:"Inj",dose:5,unit:"mcg",freq:"IV PRN (dilute to 100mcg/mL)"}},
+  {n:"Propranolol PO",brands:"Inderal",prep:{type:"dilute",tabBrand:"Inderal 10mg",tab:10,vol:10,conc:1,concU:"mg/mL"},d:[{lb:"Ppx",val:1,valHi:4,u:"mg",type:"perKg",fr:"TDS–QDS"}],perDay:"1-4mg/kg",mxD:"40mg",mxDay:"8mg/kg",tabs:[10,20,40],w:"HR<80→hold.",rx:{tn:"Inderal",form:"Tab",str:"10mg",dose:1,unit:"mg",freq:"TDS",adultMax:40,dil:"Crush 10mg in 10mL→1mg/mL"}},
+  {n:"Iron",brands:"Tonoferon, Ferium XT",prep:{type:"liquid",brand:"Tonoferon drops",conc:25,concU:"mg/mL Fe"},d:[{lb:"Fe",val:3,valHi:6,u:"mg",type:"perKg",fr:"OD–BD"}],perDay:"3-6mg/kg Fe",mxD:"—",mxDay:"6mg/kg",tabs:null,w:"Anemia worsens spells. Tonoferon drops 25mg/mL, Ferium XT syrup 30mg/5mL.",rx:{tn:"Tonoferon",form:"Drops",str:"25mg/mL",dose:3,unit:"mg",freq:"OD"}},
+]},
+"tof":{title:"TOF in Infant",icon:"💙",drugs:[
+  {n:"Iron",brands:"Tonoferon, Ferium XT",prep:{type:"liquid",brand:"Tonoferon drops",conc:25,concU:"mg/mL Fe"},d:[{lb:"Fe",val:3,valHi:6,u:"mg",type:"perKg",fr:"OD–BD"}],perDay:"3-6mg/kg Fe",mxD:"—",mxDay:"6mg/kg",tabs:null,w:"Tonoferon drops 25mg/mL, Ferium XT syrup 30mg/5mL.",rx:{tn:"Tonoferon",form:"Drops",str:"25mg/mL",dose:3,unit:"mg",freq:"OD"}},
+  {n:"PGE1",brands:"Prostin VR",prep:{type:"inj",note:"0.1mL(50mcg)+50mL D5W=1mcg/mL"},iv:true,d:[{lb:"Start",val:0.01,valHi:0.05,u:"mcg/kg/min",type:"infusion",fr:"CONTINUOUS"}],perDay:"Inf",mxD:"0.1mcg/kg/min",mxDay:"Cont",tabs:null,w:"APNEA.",rx:{isInf:true,rxLine:"Inj Prostin VR 0.01mcg/kg/min (0.1mL in 50mL D5W=1mcg/mL). APNEA ready."}},
+  {n:"Propranolol PO",brands:"Inderal",prep:{type:"dilute",tabBrand:"Inderal 10mg",tab:10,vol:10,conc:1,concU:"mg/mL"},d:[{lb:"Ppx",val:1,valHi:4,u:"mg",type:"perKg",fr:"TDS–QDS"}],perDay:"1-4mg/kg",mxD:"40mg",mxDay:"8mg/kg",tabs:[10,20,40],w:"HR<80→hold.",rx:{tn:"Inderal",form:"Tab",str:"10mg",dose:1,unit:"mg",freq:"TDS",dil:"Crush 10mg in 10mL→1mg/mL"}},
+]},
+"vt":{title:"Ventricular Tachycardia",icon:"💔",drugs:[
+  {n:"Amiodarone",brands:"Cordarone",prep:{type:"inj"},iv:true,d:[{lb:"IV",val:5,u:"mg",type:"perKg",fr:"Over 20-60min"}],perDay:"15mg/kg",mxD:"300mg",mxDay:"15mg/kg",tabs:null,w:"Not+procainamide.",rx:{tn:"Cordarone",form:"Inj",dose:5,unit:"mg",freq:"over 20-60min (may repeat×3)"}},
+  {n:"Cardioversion",brands:"Defib",prep:null,iv:true,d:[{lb:"Sync",val:0.5,valHi:1,u:"J",type:"perKg",fr:"SYNC"}],perDay:"—",mxD:"2J/kg",mxDay:"—",tabs:null,w:"Sedate.",rx:null},
+  {n:"Defibrillation",brands:"Defib",prep:null,iv:true,d:[{lb:"1st",val:2,u:"J",type:"perKg",fr:"UNSYNC"},{lb:"Next",val:4,u:"J",type:"perKg",fr:"q2min"}],perDay:"—",mxD:"10J/kg",mxDay:"—",tabs:null,w:"Pulseless.",rx:null},
+  {n:"Epi (arrest)",brands:"Adrenaline",prep:{type:"inj"},iv:true,d:[{lb:"IV",val:0.01,u:"mg",type:"perKg",fr:"q3-5min"}],perDay:"Arrest",mxD:"1mg",mxDay:"PRN",tabs:null,w:"1:10000.",rx:{tn:"Adrenaline",form:"Inj",dose:0.01,unit:"mg",freq:"q3-5min (0.1mL/kg 1:10000)"}},
+  {n:"Lidocaine",brands:"Xylocard",prep:{type:"inj"},iv:true,d:[{lb:"Bolus",val:1,u:"mg",type:"perKg",fr:"IV/IO"},{lb:"Inf",val:20,valHi:50,u:"mcg/kg/min",type:"infusion",fr:"CONTINUOUS"}],perDay:"Inf",mxD:"100mg",mxDay:"3mg/kg",tabs:null,w:"=Amiodarone.",rx:{tn:"Xylocard",form:"Inj",dose:1,unit:"mg",freq:"IV bolus then 20mcg/kg/min"}},
+  {n:"MgSO4 (Torsades)",brands:"MgSO4",prep:{type:"inj"},iv:true,d:[{lb:"IV",val:25,valHi:50,u:"mg",type:"perKg",fr:"Over 10-20min"}],perDay:"PRN",mxD:"2g",mxDay:"2g",tabs:null,w:"Torsades.",rx:{tn:"MgSO4 50%",form:"Inj",dose:25,unit:"mg",freq:"over 10-20min"}},
+]},
+};
+
+// ── ORDERING: Quick first → alpha → Bronch → Fetal SVT → Fetal Brady ──
+const _all=Object.keys(DB);
+const _first=["quick"];const _last=["bronch","fsvt","fbrady"];
+const _mid=_all.filter(k=>!_first.includes(k)&&!_last.includes(k)).sort((a,b)=>DB[a].title.localeCompare(DB[b].title));
+const CATS=[..._first,..._mid,..._last];
+const M={mono:"'JetBrains Mono','Consolas',monospace",sans:"'Segoe UI',system-ui,sans-serif"};
+
+// ── RX GENERATOR — PRACTICAL FRACTIONS, ADULT CAPS, BAND DOSING ──
+function genRx(drug,w,syrup){
+  const rx=drug.rx;if(!rx)return null;
+  if(rx.rxLine)return{line:rx.rxLine,dil:null,note:rx.note};
+  if(rx.isInf)return null; // handled by rxLine
+  const p=drug.prep;
+  let perDoseMg=rx.fixed||(rx.dose?rx.dose*w:null);
+  if(!perDoseMg)return null;
+  const unit=rx.unit||"mg";const freq=rx.freq||"";
+
+  // Adult cap >40kg
+  if(rx.adultMax&&w>=40&&perDoseMg>rx.adultMax){
+    perDoseMg=rx.adultMax;
+    // If overMax line available (e.g. Dytor for furo)
+    if(rx.overMax)return{line:rx.overMax,dil:null,note:rx.note};
+  }
+  // If still over adultMax after cap + overMax exists
+  if(rx.overMax&&perDoseMg>rx.adultMax)return{line:rx.overMax,dil:null,note:rx.note};
+
+  // Band dosing (VYMADA, Bosentan)
+  if(rx.bandDose&&rx.bands){
+    for(const b of rx.bands){
+      if(w<=b.maxWt){
+        if(b.useDil&&syrup&&p&&p.conc){
+          const mlV=rML(perDoseMg/p.conc);
+          return{line:`${rx.tn} — ${mlV} mL ${freq}`,dil:rx.dil,note:rx.note};
+        }
+        if(b.line)return{line:b.line,dil:null,note:rx.note};
+      }
+    }
+  }
+
+  // Shelcal tab switch >20kg
+  if(rx.tabSwitch&&w>=rx.tabSwitch&&rx.tabLine)return{line:rx.tabLine,dil:null,note:rx.note};
+
+  // forceML: show syrup mL even for 10-20kg (e.g. Shelcal)
+  if(rx.forceML&&rx.sypConc&&w<(rx.tabSwitch||999)){
+    const mlV=rML(perDoseMg/rx.sypConc);
+    return{line:`Syp ${rx.tn} (${rx.str||""}) — ${mlV} mL ${freq}`,dil:null,note:rx.note};
+  }
+
+  // <10kg: syrup/dilution
+  if(syrup&&p&&(p.type==="liquid"||p.type==="dilute")&&p.conc){
+    const conc=rx.sypConc||p.conc;
+    const mlV=rML(perDoseMg/conc);
+    if(p.type==="liquid"){
+      const lbl=rx.form==="Drops"?`${rx.tn} drops`:`Syp ${rx.tn}`;
+      return{line:`${lbl} (${rx.str||""}) — ${mlV} mL ${freq}`,dil:null,note:rx.note};
+    }
+    return{line:`${rx.tn} — ${mlV} mL orally ${freq}`,dil:rx.dil||`Crush ${p.tabBrand} in ${p.vol}mL NS`,note:rx.note};
+  }
+
+  // wholeTab: nearest single tab (aspirin ARF)
+  if(rx.wholeTab&&drug.tabs){
+    const sorted=drug.tabs.filter(t=>typeof t==="number").sort((a,b)=>a-b);
+    let best=sorted[0],bestD=Math.abs(perDoseMg-sorted[0]);
+    for(const t of sorted){const d=Math.abs(perDoseMg-t);if(d<bestD){bestD=d;best=t}}
+    return{line:`Tab ${rx.tn} ${best}mg — 1 tab ${freq}`,dil:null,note:rx.note};
+  }
+
+  // ≥10kg: practical tab fraction
+  if(drug.tabs&&drug.tabs.some(t=>typeof t==="number")){
+    const tn=rx.tabTn||rx.tn;
+    // Special: Digon tab is 0.25mg, dose in mcg → convert
+    let targetForTab=perDoseMg;
+    if(unit==="mcg"&&drug.tabs.some(t=>t<1)){targetForTab=perDoseMg/1000;} // mcg→mg for 0.25mg tab
+    const bt=bestTab(targetForTab,drug.tabs.filter(t=>typeof t==="number"));
+    if(bt){
+      const str=unit==="mcg"?`${bt.tab*1000}mcg`:`${bt.tab}mg`;
+      return{line:`Tab ${tn} ${bt.str}${unit==="mcg"?"mg":"mg"} — ${bt.label} ${freq}`,dil:null,note:rx.note};
+    }
+    // fallback: just show dose
+    return{line:`Tab ${tn} — ${fmt(perDoseMg)} ${unit} ${freq}`,dil:null,note:rx.note};
+  }
+
+  // Injection or other
+  const form=rx.form||"";const tn=rx.tabTn||rx.tn;const str=rx.tabStr||rx.str||"";
+  return{line:`${form} ${tn} ${str} — ${fmt(perDoseMg)} ${unit} ${freq}`,dil:null,note:rx.note};
+}
+
+// ── APP ──
+function App(){
+  const[wt,setWt]=useState("");const[ht,setHt]=useState("");const[showHt,setShowHt]=useState(false);
+  const[cat,setCat]=useState("");const[sel,setSel]=useState({});const[exp,setExp]=useState(null);
+  const[dropOpen,setDropOpen]=useState(false);const[opd,setOpd]=useState(false);
+  const dropRef=useRef(null);
+  const weight=parseFloat(wt)||0;const height=parseFloat(ht)||0;
+  const bsa=useMemo(()=>calcBSA(weight,height),[weight,height]);
+  const allDrugs=cat?DB[cat]?.drugs||[]:[];
+  const drugs=opd?allDrugs.filter(dr=>!dr.iv&&!dr.d.every(dd=>dd.iv)):allDrugs;
+  const isFetal=DB[cat]?.isFetal;const needsBSA=useMemo(()=>drugs.some(dr=>dr.hasBSA),[drugs]);
+  const syrup=weight>0&&weight<10;
+  const selectedDrugs=useMemo(()=>drugs.filter((_,i)=>sel[`${cat}-${i}`]),[drugs,sel,cat]);
+  const hasRx=selectedDrugs.length>0&&(weight>0||isFetal);
+  useEffect(()=>{setSel({});setExp(null)},[cat,opd]);
+  useEffect(()=>{const c=e=>{if(dropRef.current&&!dropRef.current.contains(e.target))setDropOpen(false)};document.addEventListener("mousedown",c);return()=>document.removeEventListener("mousedown",c)},[]);
+
+  const C={bg:"#0B1929",card:"#0F2236",on:"#0D2A45",bdr:"#1A3A5C",act:"#1565C0",acc:"#42A5F5",dose:"#4FC3F7",dim:"#5A7A96",wh:"#EEF2F6",grn:"#76FF03",ylw:"#FFD54F",prp:"#B39DDB",ml:"#76FF03",freq:"#FFB74D"};
+
+  return(<div style={{minHeight:"100vh",background:C.bg,color:"#C8D8E8",fontFamily:M.sans,display:"flex",flexDirection:"column"}}>
+    <div style={{background:"#0D2137",borderBottom:`1px solid ${C.bdr}`,padding:"6px 10px",position:"sticky",top:0,zIndex:100}}>
+      <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+        <div style={{display:"flex",alignItems:"center",gap:4}}><div style={{width:24,height:24,borderRadius:4,background:C.act,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800,fontSize:10,color:"#fff"}}>Rx</div><b style={{fontSize:12,color:"#fff"}}>PedCard</b></div>
+        <div style={{display:"flex",alignItems:"center",gap:2,background:"#0A1929",border:`1px solid ${C.bdr}`,borderRadius:4,padding:"2px 5px"}}><span style={{fontSize:8,color:C.dim}}>WT</span><input type="number" inputMode="decimal" value={wt} onChange={e=>setWt(e.target.value)} placeholder="kg" style={{width:45,background:"transparent",border:"none",color:C.wh,fontSize:14,fontWeight:700,fontFamily:M.mono,outline:"none"}}/><span style={{fontSize:9,color:C.dim}}>kg</span></div>
+        {(showHt||needsBSA)?(<div style={{display:"flex",alignItems:"center",gap:2,background:"#0A1929",border:`1px solid ${C.bdr}`,borderRadius:4,padding:"2px 5px"}}><span style={{fontSize:8,color:C.dim}}>HT</span><input type="number" inputMode="decimal" value={ht} onChange={e=>setHt(e.target.value)} placeholder="cm" style={{width:38,background:"transparent",border:"none",color:C.wh,fontSize:14,fontWeight:700,fontFamily:M.mono,outline:"none"}}/><span style={{fontSize:9,color:C.dim}}>cm</span></div>):(<div onClick={()=>setShowHt(true)} style={{fontSize:9,color:C.acc,cursor:"pointer",padding:"3px 5px",background:"#0A1929",borderRadius:3}}>+Ht</div>)}
+        {bsa>0&&<span style={{fontSize:10,color:C.dose,fontFamily:M.mono}}>BSA{bsa.toFixed(2)}</span>}
+        <div onClick={()=>setOpd(!opd)} style={{display:"flex",alignItems:"center",gap:3,cursor:"pointer",padding:"2px 6px",background:opd?"#1B5E20":"#0A1929",border:`1px solid ${opd?"#4CAF50":C.bdr}`,borderRadius:4}}><div style={{width:22,height:12,borderRadius:6,background:opd?"#4CAF50":"#1E3A54",display:"flex",alignItems:"center",padding:1}}><div style={{width:8,height:8,borderRadius:4,background:"#fff",transform:opd?"translateX(10px)":"",transition:"0.1s"}}/></div><span style={{fontSize:9,color:opd?C.grn:C.dim,fontWeight:600}}>OPD</span></div>
+      </div>
+      <div ref={dropRef} style={{marginTop:5,position:"relative"}}>
+        <div onClick={()=>setDropOpen(!dropOpen)} style={{padding:"5px 10px",background:cat?"#0D2A45":"#0A1929",border:`1px solid ${cat?C.act:C.bdr}`,borderRadius:5,cursor:"pointer",fontSize:12,color:cat?"#fff":C.dim,display:"flex",justifyContent:"space-between"}}><span>{cat?`${DB[cat].icon} ${DB[cat].title}`:"▼ Select Condition"}</span><span style={{fontSize:9}}>{dropOpen?"▲":"▼"}</span></div>
+        {dropOpen&&<div style={{position:"absolute",left:0,right:0,marginTop:2,background:"#0D2137",border:`1px solid ${C.bdr}`,borderRadius:6,boxShadow:"0 8px 32px rgba(0,0,0,0.6)",maxHeight:300,overflowY:"auto",zIndex:200}}>{CATS.map(k=><div key={k} onClick={()=>{setCat(k);setDropOpen(false)}} style={{padding:"8px 12px",cursor:"pointer",fontSize:12,color:cat===k?"#fff":"#C8D8E8",background:cat===k?C.act:"transparent",borderBottom:"1px solid #132F4C"}} onMouseEnter={e=>{if(cat!==k)e.currentTarget.style.background="#132F4C"}} onMouseLeave={e=>{if(cat!==k)e.currentTarget.style.background="transparent"}}>{DB[k].icon} {DB[k].title}</div>)}</div>}
+      </div>
+    </div>
+    <div style={{flex:1,overflowY:"auto",padding:"6px 10px",maxWidth:880,margin:"0 auto",width:"100%"}}>
+      {!cat?(<div style={{textAlign:"center",marginTop:40}}><div style={{fontSize:32,opacity:0.15}}>💊</div><div style={{fontSize:13,color:C.dim,marginTop:6}}>Enter weight → Select condition → Toggle drugs</div></div>):(
+        <>
+          {isFetal&&<div style={{padding:"4px 8px",background:"#1A1A0A",border:"1px solid #4A4A20",borderRadius:4,fontSize:10,color:C.ylw,marginBottom:5}}>ℹ Fetal: maternal protocols</div>}
+          {!isFetal&&weight<=0&&<div style={{padding:"4px 8px",background:"#1A0A0A",border:"1px solid #4A2020",borderRadius:4,fontSize:10,color:"#EF5350",marginBottom:5}}>⚠ Enter weight</div>}
+          {drugs.map((drug,idx)=>{
+            const key=`${cat}-${idx}`;const on=!!sel[key];const isExp=exp===key;
+            const p=drug.prep;const hasML=syrup&&p&&(p.type==="liquid"||p.type==="dilute")&&p.conc;
+            const visD=opd?drug.d.filter(dd=>!dd.iv):drug.d;
+            const firstPK=visD.find(dd=>dd.type==="perKg");
+            const firstMg=firstPK&&weight>0?(firstPK.valHi||firstPK.val)*weight:0;
+            const tabRec=(!syrup&&drug.tabs)?rT(drug.tabs,firstMg):null;
+            return(<div key={key} style={{marginBottom:3,background:on?C.on:C.card,border:`1px solid ${on?C.act:C.bdr}`,borderRadius:6,overflow:"hidden"}}>
+              <div style={{display:"flex",alignItems:"center",gap:6,padding:"5px 8px",cursor:"pointer"}}
+                onClick={()=>setSel(pp=>({...pp,[key]:!pp[key]}))}>
+                <div style={{width:30,height:15,borderRadius:8,background:on?C.act:"#1E3A54",display:"flex",alignItems:"center",padding:1,flexShrink:0}}><div style={{width:11,height:11,borderRadius:6,background:"#fff",transform:on?"translateX(15px)":"",transition:"0.1s"}}/></div>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:12,fontWeight:600,color:on?C.wh:"#8FA8C0"}}>{drug.n} <span style={{fontWeight:400,fontSize:9,color:C.dim}}>({drug.brands.split(",")[0]})</span></div>
+                  {on&&(weight>0||isFetal)&&!isExp&&(
+                    <div style={{display:"flex",flexWrap:"wrap",gap:3,marginTop:1}}>
+                      {visD.map((dose,di)=>{const r=cMg(dose,weight,bsa);const mg=mS(r);const mlV=hasML?mL(r,p.conc):null;
+                        return(<span key={di} style={{fontSize:10}}>
+                          {mlV&&<span style={{color:C.ml,fontFamily:M.mono,fontWeight:800,fontSize:12}}>{mlV} </span>}
+                          <span style={{color:C.dose,fontFamily:M.mono,fontWeight:700,fontSize:mlV?10:12}}>{isFetal?dose.fr:mg}</span>
+                          <span style={{color:C.freq,fontWeight:700,fontSize:10,background:"#2A1A00",padding:"0 3px",borderRadius:2,marginLeft:2}}>{dose.fr}</span>
+                        </span>)
+                      })}
+                      {tabRec&&<span style={{fontSize:8,color:C.grn}}>💊{tabRec}mg</span>}
+                    </div>)}
+                </div>
+                <div onClick={e=>{e.stopPropagation();setExp(isExp?null:key)}} style={{fontSize:9,color:C.acc,cursor:"pointer",padding:"1px 3px"}}>{isExp?"▲":"▼"}</div>
+              </div>
+              {isExp&&(<div style={{padding:"0 8px 6px",borderTop:`1px solid ${C.bdr}`}}>
+                {hasML&&p.type==="dilute"&&<div style={{marginTop:5,padding:"5px 8px",background:"#0A2010",border:"1px solid #1B5E20",borderRadius:4,fontSize:11,color:C.grn}}>💧 <b>{p.tabBrand} in {p.vol}mL NS → {p.conc} {p.concU}</b>{p.note&&<span style={{color:"#A5D6A7"}}> | {p.note}</span>}</div>}
+                {hasML&&p.type==="liquid"&&<div style={{marginTop:5,padding:"5px 8px",background:"#0A1A2A",border:`1px solid ${C.act}`,borderRadius:4,fontSize:11,color:C.acc}}>🧴 <b>{p.brand}</b> — {p.conc} {p.concU}</div>}
+                {p&&p.type==="inj"&&p.note&&<div style={{marginTop:5,padding:"4px 8px",background:"#0F1A2A",border:"1px solid #2A4A6A",borderRadius:4,fontSize:10,color:"#90CAF9",whiteSpace:"pre-line"}}>💉 {p.note}</div>}
+                {p&&p.type==="other"&&p.note&&<div style={{marginTop:5,padding:"4px 8px",background:"#1A1A0A",border:"1px solid #4A4A20",borderRadius:4,fontSize:10,color:C.ylw}}>ℹ {p.note}</div>}
+                <div style={{marginTop:5}}>{visD.map((dose,di)=>{const r=cMg(dose,weight,bsa);const mg=mS(r);const mlV=hasML?mL(r,p.conc):null;
+                  return(<div key={di} style={{padding:"3px 0",borderBottom:"1px solid #132F4C",display:"flex",flexWrap:"wrap",gap:4,alignItems:"baseline"}}>
+                    <span style={{color:"#B0C4D8",fontWeight:600,fontSize:11,minWidth:50}}>{dose.lb}</span>
+                    {mlV?(<><span style={{color:C.ml,fontFamily:M.mono,fontWeight:800,fontSize:13}}>→{mlV}</span><span style={{color:C.dim,fontSize:9}}>({mg})</span></>):(<span style={{color:C.dose,fontFamily:M.mono,fontWeight:700,fontSize:13}}>→{isFetal?dose.fr:mg}</span>)}
+                    <span style={{color:C.freq,fontWeight:800,fontSize:11,background:"#2A1A00",padding:"1px 5px",borderRadius:3,marginLeft:"auto"}}>{dose.fr}</span>
+                  </div>)})}</div>
+                {tabRec&&<div style={{marginTop:3,fontSize:10,color:C.grn}}>💊 Use <b>{tabRec}mg</b> | {drug.tabs.join(",")}mg</div>}
+                {!syrup&&p&&p.type==="dilute"&&<div style={{marginTop:3,fontSize:9,color:"#90CAF9"}}>For&lt;10kg: {p.tabBrand} in {p.vol}mL→{p.conc}{p.concU}</div>}
+                <div style={{marginTop:3,padding:"3px 6px",background:"#0A1929",borderRadius:3,fontSize:10,display:"flex",flexWrap:"wrap",gap:6}}>
+                  <span><span style={{color:C.dim}}>Dose: </span><span style={{color:C.dose,fontFamily:M.mono}}>{drug.perDay}</span></span>
+                  {drug.mxD&&<span><span style={{color:C.dim}}>Max/dose: </span><span style={{color:"#EF9A9A"}}>{drug.mxD}</span></span>}
+                  {drug.mxDay&&<span><span style={{color:C.dim}}>Max/day: </span><span style={{color:"#EF9A9A"}}>{drug.mxDay}</span></span>}
+                </div>
+                {drug.combos&&<div style={{marginTop:2,fontSize:10,color:C.prp}}>💊 {drug.combos}</div>}
+                <div style={{marginTop:2,padding:"3px 6px",background:"#1A0A0A",border:"1px solid #3A1515",borderRadius:3,fontSize:9,color:"#EF9A9A"}}>⚠ {drug.w}</div>
+              </div>)}
+            </div>)
+          })}
+          {/* ══ PRESCRIPTION PAD ══ */}
+          {hasRx&&(<div style={{marginTop:14,marginBottom:20}}>
+            <div style={{background:"#FEFEFE",color:"#1a1a1a",borderRadius:6,padding:"16px 18px",fontFamily:"'Georgia','Times New Roman',serif",border:"2px solid #1565C0"}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",borderBottom:"2px solid #333",paddingBottom:8,marginBottom:10}}>
+                <div style={{fontSize:28,fontWeight:700,color:"#1565C0"}}>℞</div>
+                <div style={{textAlign:"right",fontSize:11,color:"#555",lineHeight:1.6}}>
+                  <div>Date: <b>{new Date().toLocaleDateString("en-IN")}</b></div>
+                  <div>Weight: <b>{weight} kg</b></div>
+                  {bsa>0&&<div>BSA: {bsa.toFixed(2)} m²</div>}
+                </div>
+              </div>
+              <div style={{fontSize:13,fontWeight:700,color:"#333",marginBottom:12,textTransform:"uppercase",letterSpacing:0.5,borderBottom:"1px solid #eee",paddingBottom:6}}>{DB[cat].icon} {DB[cat].title}</div>
+              <div style={{paddingLeft:2}}>
+                {selectedDrugs.map((drug,si)=>{
+                  const result=genRx(drug,weight,syrup);
+                  if(!result)return null;
+                  return(<div key={si} style={{marginBottom:10,paddingBottom:8,borderBottom:"1px dashed #ddd"}}>
+                    <div style={{fontSize:13,color:"#1a1a1a",lineHeight:1.6}}>
+                      <b style={{color:"#1565C0",fontSize:14,marginRight:6}}>{si+1}.</b>{result.line}
+                    </div>
+                    {result.dil&&<div style={{fontSize:10,color:"#666",marginLeft:20,marginTop:2,fontStyle:"italic"}}>Prep: {result.dil}</div>}
+                    {result.note&&<div style={{fontSize:10,color:"#888",marginLeft:20,marginTop:1}}>{result.note}</div>}
+                  </div>);
+                })}
+              </div>
+              <div style={{marginTop:14,paddingTop:10,borderTop:"1px solid #ccc",display:"flex",justifyContent:"space-between",alignItems:"flex-end"}}>
+                <div style={{fontSize:9,color:"#999",maxWidth:"55%",lineHeight:1.4}}>Starting doses. Uptitrate as tolerated.<br/>Review at follow-up.</div>
+                <div style={{textAlign:"right"}}><div style={{borderTop:"1px solid #333",width:140,marginBottom:4}}/><div style={{fontSize:10,color:"#555"}}>Signature / Stamp</div></div>
+              </div>
+            </div>
+          </div>)}
+        </>
+      )}
+    </div>
+    <div style={{background:"#0A1929",borderTop:`1px solid ${C.bdr}`,padding:"3px 10px",fontSize:8,color:"#3A5068",textAlign:"center"}}>AHA/ACC/ESC • PALS 2020 • PubMed. Verify all doses.</div>
+  </div>);
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
